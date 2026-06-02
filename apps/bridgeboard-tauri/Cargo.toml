@@ -1,0 +1,20 @@
+[package]
+name = "bridgeboard-tauri"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri tray and dashboard shell for Bridgeboard"
+authors = ["Yang Jingsen <yang-jingsen@foxmail.com>"]
+license = "MIT"
+
+[[bin]]
+name = "bridgeboard-tray"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+bridgeboard = { path = "../.." }
+tauri = { version = "2", features = ["tray-icon"] }
+webbrowser = "1.2.1"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

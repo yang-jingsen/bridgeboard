@@ -1,0 +1,8 @@
+machine_id: workstation
+defaults:
+  handoff_tunnel_modes: [local_forward]
+  assume_local_forward_for_peers: true
+peers:
+  gpu-box:
+    ssh_alias: gpu-box
+    bridgeboard_bin: bridgeboard

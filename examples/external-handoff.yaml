@@ -1,0 +1,25 @@
+schema: portal-bridge.v1
+id: model-inspector
+title: Model Inspector
+owner_host: gpu-box
+port: 24050
+service:
+  mode: external
+  pid: 12345
+  pid_source: port:24050
+  pid_port: 24050
+  cwd: /path/to/project
+  start_command: npm run dev -- --host 127.0.0.1 --port 24050
+  detach: scheduled_task
+  stop_command: taskkill /PID 12345 /T /F
+  restart_command: npm run restart -- --port 24050
+  task_name: Bridgeboard-model-inspector
+  log_file: server.log
+  health_url: http://127.0.0.1:24050/
+  notes: started by an agent outside Bridgeboard
+tunnel:
+  modes: []
+  bind_host: 127.0.0.1
+local_url: http://127.0.0.1:24050/
+network_url: http://100.x.y.z:24050/
+open_url: http://127.0.0.1:24050/

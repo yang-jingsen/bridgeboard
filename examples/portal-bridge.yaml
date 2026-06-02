@@ -1,0 +1,20 @@
+schema: portal-bridge.v1
+id: image-review-portal
+title: Image Review Portal
+owner_host: gpu-box
+port: 24001
+service:
+  mode: managed
+  lifecycle:
+    startup: on_demand
+    restart: on_failure
+  cwd: /srv/research/image-review-portal
+  command: ["python3", "-m", "http.server", "24001", "--bind", "127.0.0.1"]
+  pid_file: .bridgeboard/server.pid
+  log_file: .bridgeboard/server.log
+  health_url: http://127.0.0.1:24001/
+  startup_timeout_sec: 10
+tunnel:
+  modes: [local_forward, reverse_forward]
+  bind_host: 127.0.0.1
+open_url: http://127.0.0.1:24001/

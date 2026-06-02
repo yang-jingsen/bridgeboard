@@ -1,0 +1,33 @@
+[package]
+name = "bridgeboard"
+version = "0.1.0"
+edition = "2021"
+description = "Low-resource service and SSH tunnel manager for project portals and tools"
+authors = ["Yang Jingsen <yang-jingsen@foxmail.com>"]
+license = "MIT"
+readme = "README.md"
+keywords = ["service", "ports", "ssh", "tray", "dashboard"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.5.58", features = ["derive"] }
+dirs = "6.0.0"
+eframe = "0.33"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+serde_yaml = "0.9.34"
+url = "2.5.8"
+webbrowser = "1.2.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

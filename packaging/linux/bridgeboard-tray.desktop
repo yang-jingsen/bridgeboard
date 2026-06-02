@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Bridgeboard Tray
+Comment=Bridgeboard service and SSH tunnel manager
+Exec=bridgeboard-tray
+Icon=bridgeboard
+Terminal=false
+Categories=Utility;Network;
