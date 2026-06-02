@@ -89,15 +89,60 @@ fn peer_command_output(
 }
 
 fn remote_command_line(bridgeboard_bin: &str, args: &[&str]) -> String {
-    std::iter::once(bridgeboard_bin)
-        .chain(args.iter().copied())
-        .map(remote_arg_quote)
-        .collect::<Vec<_>>()
-        .join(" ")
+    format!(
+        "{} exec-encoded {}",
+        remote_arg_quote(bridgeboard_bin),
+        encode_remote_args(args)
+    )
 }
 
 fn remote_arg_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\\\""))
+}
+
+pub fn encode_remote_args(args: &[&str]) -> String {
+    let bytes = serde_json::to_vec(args).expect("remote args are JSON-serializable");
+    hex_encode(&bytes)
+}
+
+pub fn decode_remote_args(payload: &str) -> Result<Vec<String>, String> {
+    let bytes = hex_decode(payload)?;
+    serde_json::from_slice::<Vec<String>>(&bytes).map_err(|err| err.to_string())
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode(payload: &str) -> Result<Vec<u8>, String> {
+    if payload.len() % 2 != 0 {
+        return Err("encoded argument payload has odd length".into());
+    }
+    let mut bytes = Vec::with_capacity(payload.len() / 2);
+    let chars = payload.as_bytes();
+    let mut i = 0;
+    while i < chars.len() {
+        let high = hex_value(chars[i])?;
+        let low = hex_value(chars[i + 1])?;
+        bytes.push((high << 4) | low);
+        i += 2;
+    }
+    Ok(bytes)
+}
+
+fn hex_value(byte: u8) -> Result<u8, String> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err("encoded argument payload contains non-hex characters".into()),
+    }
 }
 
 fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output, String> {
@@ -126,7 +171,7 @@ fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output
 
 #[cfg(test)]
 mod tests {
-    use super::remote_command_line;
+    use super::{decode_remote_args, encode_remote_args, remote_command_line};
 
     #[test]
     fn remote_command_quotes_space_containing_args() {
@@ -135,18 +180,33 @@ mod tests {
                 "bridgeboard",
                 &["rename", "model-inspector", "--title", "Model Inspector Dashboard"]
             ),
-            "\"bridgeboard\" \"rename\" \"model-inspector\" \"--title\" \"Model Inspector Dashboard\""
+            "\"bridgeboard\" exec-encoded 5b2272656e616d65222c226d6f64656c2d696e73706563746f72222c222d2d7469746c65222c224d6f64656c20496e73706563746f722044617368626f617264225d"
         );
     }
 
     #[test]
-    fn remote_command_escapes_double_quotes() {
+    fn remote_command_does_not_expose_shell_metacharacters_from_args() {
+        let line = remote_command_line(
+            "bridgeboard",
+            &[
+                "rename",
+                "id",
+                "--title",
+                "A \"quoted\" $(touch /tmp/pwn) `x` title",
+            ],
+        );
+        assert!(line.starts_with("\"bridgeboard\" exec-encoded "));
+        assert!(!line.contains("touch"));
+        assert!(!line.contains("$("));
+        assert!(!line.contains('`'));
+    }
+
+    #[test]
+    fn remote_args_round_trip_through_hex_json() {
+        let args = ["rename", "id", "--title", "A \"quoted\" $(safe) title"];
         assert_eq!(
-            remote_command_line(
-                "bridgeboard",
-                &["rename", "id", "--title", "A \"quoted\" title"]
-            ),
-            "\"bridgeboard\" \"rename\" \"id\" \"--title\" \"A \\\"quoted\\\" title\""
+            decode_remote_args(&encode_remote_args(&args)).unwrap(),
+            args
         );
     }
 }

@@ -1,5 +1,15 @@
 # Bridgeboard Changelog
 
+- 2026-06-02: Hardened the local control surface before public release.
+  Dashboard state-changing APIs now require `POST` plus a random per-process
+  `X-Bridgeboard-Token`, and `bridgeboard serve` refuses non-loopback binds
+  unless `--unsafe-remote-dashboard` is explicitly set. Peer SSH commands now
+  pass service arguments through a hidden hex-encoded JSON command path instead
+  of interpolating user-controlled titles into a remote shell command line.
+  Added README security model notes. Validation: `cargo fmt --check` passed;
+  `cargo test` passed with 10 tests; smoke checks confirmed `exec-encoded`
+  dispatch, dashboard token injection, GET action rejection, tokenless POST
+  rejection, and non-loopback bind refusal.
 - 2026-05-29: Generalized Bridgeboard for public packaging. Repository docs,
   agent handoff guidance, example configs, source test fixtures, and CLI port
   policy wording now use generic `workstation`/`gpu-box` examples instead of

@@ -39,6 +39,26 @@ Put `target/release/bridgeboard` on `PATH` on each peer. Peer sync uses SSH to r
 bridgeboard registry export --json
 ```
 
+## Security Model
+
+Bridgeboard is designed as a local operator tool, not an internet-facing
+control panel.
+
+- The dashboard binds to `127.0.0.1:24000` by default. Binding it to a
+  non-loopback address is refused unless `--unsafe-remote-dashboard` is passed.
+- Dashboard actions use `POST` plus a random per-process
+  `X-Bridgeboard-Token` embedded in the served dashboard page. This blocks
+  ordinary cross-site requests from triggering service start/stop/restart.
+- `portal-bridge.yaml`, handoff YAML, and Bridgeboard machine config are
+  trusted inputs. Managed service commands and external stop/restart commands
+  can execute local shell commands.
+- SSH peers are trusted operators. Bridgeboard encodes remote command arguments
+  before invoking peer Bridgeboard over SSH so service titles and ids are not
+  interpolated by the remote shell.
+- External service stop can kill the recorded PID or current listener on the
+  service's fixed port. Keep handoff metadata current and do not register
+  untrusted services.
+
 ## Binary Packages
 
 The release bundles are written under `dist/`:

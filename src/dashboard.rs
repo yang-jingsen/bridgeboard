@@ -9,10 +9,11 @@ use url::Url;
 pub fn serve(env: DashboardEnv, host: &str, port: u16, include_peers: bool) -> Result<()> {
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).with_context(|| format!("bind dashboard on {addr}"))?;
+    let token = dashboard_token()?;
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                if let Err(err) = handle_request(&env, &mut stream, include_peers) {
+                if let Err(err) = handle_request(&env, &mut stream, include_peers, &token) {
                     eprintln!("dashboard request failed: {err}");
                 }
             }
@@ -26,16 +27,23 @@ pub fn port_rows(env: &DashboardEnv, include_peers: bool) -> Result<Vec<PortRow>
     core::port_rows(env, include_peers)
 }
 
-fn handle_request(env: &DashboardEnv, stream: &mut TcpStream, include_peers: bool) -> Result<()> {
+fn handle_request(
+    env: &DashboardEnv,
+    stream: &mut TcpStream,
+    include_peers: bool,
+    token: &str,
+) -> Result<()> {
     let mut buffer = [0_u8; 4096];
     let n = stream.read(&mut buffer)?;
     let request = String::from_utf8_lossy(&buffer[..n]);
     let first_line = request.lines().next().unwrap_or_default();
-    let target = first_line.split_whitespace().nth(1).unwrap_or("/");
+    let mut first_parts = first_line.split_whitespace();
+    let method = first_parts.next().unwrap_or_default();
+    let target = first_parts.next().unwrap_or("/");
     let url = Url::parse(&format!("http://bridgeboard.local{target}"))
         .with_context(|| format!("parse request target {target}"))?;
     match url.path() {
-        "/" | "/index.html" => respond_html(stream, dashboard_html())?,
+        "/" | "/index.html" => respond_html(stream, &dashboard_html(token))?,
         "/api/ports" => {
             let rows = port_rows(env, include_peers)?;
             respond_json(stream, &serde_json::to_string_pretty(&rows)?)?;
@@ -61,6 +69,9 @@ fn handle_request(env: &DashboardEnv, stream: &mut TcpStream, include_peers: boo
             )?;
         }
         "/api/action" => {
+            if !require_post_token(stream, method, &request, token)? {
+                return Ok(());
+            }
             let id = query_value(&url, "id").context("missing id")?;
             let action = query_value(&url, "action").context("missing action")?;
             let title = query_value(&url, "title");
@@ -83,6 +94,9 @@ fn handle_request(env: &DashboardEnv, stream: &mut TcpStream, include_peers: boo
             }
         }
         "/api/open-dashboard" => {
+            if !require_post_token(stream, method, &request, token)? {
+                return Ok(());
+            }
             let dashboard_url = format!("http://{}/", stream.local_addr()?);
             webbrowser::open(&dashboard_url).with_context(|| format!("open {dashboard_url}"))?;
             respond_json(
@@ -97,6 +111,42 @@ fn handle_request(env: &DashboardEnv, stream: &mut TcpStream, include_peers: boo
         _ => respond_not_found(stream)?,
     }
     Ok(())
+}
+
+fn require_post_token(
+    stream: &mut TcpStream,
+    method: &str,
+    request: &str,
+    token: &str,
+) -> Result<bool> {
+    if method != "POST" {
+        respond(
+            stream,
+            "405 Method Not Allowed",
+            "application/json; charset=utf-8",
+            r#"{"ok":false,"message":"method not allowed"}"#,
+        )?;
+        return Ok(false);
+    }
+    if header_value(request, "x-bridgeboard-token").as_deref() != Some(token) {
+        respond(
+            stream,
+            "403 Forbidden",
+            "application/json; charset=utf-8",
+            r#"{"ok":false,"message":"forbidden"}"#,
+        )?;
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn header_value(request: &str, name: &str) -> Option<String> {
+    request.lines().skip(1).find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case(name)
+            .then(|| value.trim().to_string())
+    })
 }
 
 fn query_value(url: &Url, key: &str) -> Option<String> {
@@ -194,8 +244,25 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &str)
     Ok(())
 }
 
-pub fn dashboard_html() -> &'static str {
-    DASHBOARD_HTML
+pub fn dashboard_html(token: &str) -> String {
+    DASHBOARD_HTML.replace("__BRIDGEBOARD_TOKEN__", token)
+}
+
+fn dashboard_token() -> Result<String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|err| anyhow::anyhow!("generate dashboard token: {err}"))?;
+    Ok(hex_encode(&bytes))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 const DASHBOARD_HTML: &str = r##"<!doctype html>
@@ -432,6 +499,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
   </style>
 </head>
 <body>
+  <script>window.__bridgeboardToken = "__BRIDGEBOARD_TOKEN__";</script>
   <div class="shell">
     <aside class="sidebar">
       <div class="brand">
@@ -770,7 +838,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
 
     async function runDashboardOpen() {
       try {
-        const response = await fetch('/api/open-dashboard', { cache: 'no-store' });
+        const response = await fetch('/api/open-dashboard', authOptions({ method: 'POST', cache: 'no-store' }));
         const result = await response.json();
         showToast(result.message || 'opened dashboard');
         if (!response.ok || !result.ok) throw new Error(result.message || 'failed');
@@ -811,7 +879,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       status.textContent = action + ' ' + id + '...';
       try {
         const params = new URLSearchParams({ id, action, ...extra });
-        const response = await fetch('/api/action?' + params.toString(), { cache: 'no-store' });
+        const response = await fetch('/api/action?' + params.toString(), authOptions({ method: 'POST', cache: 'no-store' }));
         const result = await response.json();
         showToast(result.message || 'done');
         if (!response.ok || !result.ok) throw new Error(result.message || 'failed');
@@ -823,6 +891,12 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         busyKey = '';
         render();
       }
+    }
+
+    function authOptions(options = {}) {
+      const headers = new Headers(options.headers || {});
+      headers.set('X-Bridgeboard-Token', window.__bridgeboardToken || '');
+      return { ...options, headers };
     }
 
     function showToast(message) {

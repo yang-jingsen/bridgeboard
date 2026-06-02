@@ -520,6 +520,7 @@ dependencies = [
  "clap",
  "dirs",
  "eframe",
+ "getrandom 0.3.4",
  "serde",
  "serde_json",
  "serde_yaml",

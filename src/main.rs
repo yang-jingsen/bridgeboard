@@ -15,6 +15,7 @@ use bridgeboard::time;
 use bridgeboard::tray;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::fs;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -62,6 +63,13 @@ enum Command {
         #[command(subcommand)]
         command: RegistryCommand,
     },
+    #[command(hide = true, name = "exec-encoded")]
+    ExecEncoded(ExecEncodedArgs),
+}
+
+#[derive(Args)]
+struct ExecEncodedArgs {
+    payload: String,
 }
 
 #[derive(Args)]
@@ -194,6 +202,8 @@ struct ServeArgs {
     port: u16,
     #[arg(long)]
     no_peers: bool,
+    #[arg(long)]
+    unsafe_remote_dashboard: bool,
 }
 
 #[derive(Args)]
@@ -279,7 +289,25 @@ fn dispatch(env: BridgeEnv, command: Command) -> Result<()> {
         Command::Registry { command } => match command {
             RegistryCommand::Export(args) => cmd_registry_export(&env, args),
         },
+        Command::ExecEncoded(args) => cmd_exec_encoded(env, args),
     }
+}
+
+fn cmd_exec_encoded(env: BridgeEnv, args: ExecEncodedArgs) -> Result<()> {
+    let decoded = peer::decode_remote_args(&args.payload)
+        .map_err(|err| anyhow::anyhow!("decode remote argument payload: {err}"))?;
+    if decoded.is_empty() {
+        bail!("decoded remote argument payload is empty");
+    }
+    if decoded
+        .first()
+        .map(|arg| arg == "exec-encoded")
+        .unwrap_or(false)
+    {
+        bail!("nested exec-encoded commands are not allowed");
+    }
+    let cli = Cli::try_parse_from(std::iter::once("bridgeboard".to_string()).chain(decoded))?;
+    dispatch(env, cli.command)
 }
 
 fn cmd_handoff(env: &BridgeEnv, args: HandoffArgs) -> Result<()> {
@@ -555,9 +583,23 @@ fn cmd_dashboard() -> Result<()> {
 }
 
 fn cmd_serve(env: &BridgeEnv, args: ServeArgs) -> Result<()> {
+    if !args.unsafe_remote_dashboard && !is_loopback_host(&args.host) {
+        bail!(
+            "refusing to bind dashboard to non-loopback host `{}` without --unsafe-remote-dashboard",
+            args.host
+        );
+    }
     let addr = format!("{}:{}", args.host, args.port);
     println!("Bridgeboard dashboard: http://{addr}/");
     dashboard::serve(env.clone(), &args.host, args.port, !args.no_peers)
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost"
+        || host
+            .parse::<IpAddr>()
+            .map(|addr| addr.is_loopback())
+            .unwrap_or(false)
 }
 
 fn cmd_watch(env: &BridgeEnv, interval: u64) -> Result<()> {
