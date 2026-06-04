@@ -107,6 +107,30 @@ fn handle_request(
                 }))?,
             )?;
         }
+        "/api/open-url" => {
+            if !require_post_token(stream, method, &request, token)? {
+                return Ok(());
+            }
+            let id = query_value(&url, "id").unwrap_or_default();
+            let target_url = query_value(&url, "url").context("missing url")?;
+            match open_direct_url(&target_url, &id) {
+                Ok(message) => respond_json(
+                    stream,
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "message": message,
+                    }))?,
+                )?,
+                Err(err) => respond_json_status(
+                    stream,
+                    "500 Internal Server Error",
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "message": err.to_string(),
+                    }))?,
+                )?,
+            }
+        }
         "/health" => respond_text(stream, "ok\n")?,
         _ => respond_not_found(stream)?,
     }
@@ -207,6 +231,21 @@ fn run_action(env: &DashboardEnv, id: &str, action: &str, title: Option<&str>) -
     } else {
         lines.join("\n")
     })
+}
+
+fn open_direct_url(raw_url: &str, id: &str) -> Result<String> {
+    let target_url =
+        Url::parse(raw_url).with_context(|| format!("parse direct open URL {raw_url}"))?;
+    match target_url.scheme() {
+        "http" | "https" => {}
+        scheme => bail!("refusing to open unsupported URL scheme `{scheme}`"),
+    }
+    webbrowser::open(target_url.as_str()).with_context(|| format!("open {target_url}"))?;
+    if id.is_empty() {
+        Ok(format!("opened {}", target_url.as_str()))
+    } else {
+        Ok(format!("opened {id}: {}", target_url.as_str()))
+    }
 }
 
 fn respond_html(stream: &mut TcpStream, body: &str) -> Result<()> {
@@ -1000,8 +1039,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     function openService(id) {
       const row = currentRows.find(candidate => candidate.id === id);
       if (canDirectOpen(row)) {
-        openUrlDirect(row.url);
-        showToast('opened ' + row.url);
+        runDirectOpen(row);
         return;
       }
       runAction(id, 'open');
@@ -1012,14 +1050,24 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       return serviceState(row.runtime_status).key === 'running';
     }
 
-    function openUrlDirect(url) {
-      const link = document.createElement('a');
-      link.href = url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+    async function runDirectOpen(row) {
+      const status = document.getElementById('status');
+      busyKey = row.id + ':open';
+      render();
+      status.textContent = 'open ' + row.id + '...';
+      try {
+        const params = new URLSearchParams({ id: row.id, url: row.url });
+        const response = await fetch('/api/open-url?' + params.toString(), authOptions({ method: 'POST', cache: 'no-store' }));
+        const result = await response.json();
+        showToast(result.message || 'opened ' + row.url);
+        if (!response.ok || !result.ok) throw new Error(result.message || 'failed');
+      } catch (err) {
+        status.textContent = 'Open failed: ' + err;
+        showToast('Open failed: ' + err);
+      } finally {
+        busyKey = '';
+        render();
+      }
     }
 
     function renameService(id) {
