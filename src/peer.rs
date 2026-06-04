@@ -6,18 +6,31 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub fn fetch_peer_exports(app: &AppConfig) -> Vec<(String, Result<RegistryExport, String>)> {
-    app.peers
-        .iter()
-        .map(|(name, peer)| {
-            let ssh_alias = peer.ssh_alias.as_deref().unwrap_or(name);
-            let bridgeboard_bin = peer.bridgeboard_bin.as_deref().unwrap_or("bridgeboard");
-            let result = peer_registry_output(ssh_alias, bridgeboard_bin).and_then(|out| {
+    let mut handles = Vec::new();
+    for (name, peer) in &app.peers {
+        let name = name.clone();
+        let ssh_alias = peer.ssh_alias.clone().unwrap_or_else(|| name.clone());
+        let bridgeboard_bin = peer
+            .bridgeboard_bin
+            .clone()
+            .unwrap_or_else(|| "bridgeboard".into());
+        let handle = thread::spawn(move || {
+            let result = peer_registry_output(&ssh_alias, &bridgeboard_bin).and_then(|out| {
                 if !out.status.success() {
                     return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
                 }
                 serde_json::from_slice::<RegistryExport>(&out.stdout).map_err(|e| e.to_string())
             });
-            (name.clone(), result)
+            (name, result)
+        });
+        handles.push(handle);
+    }
+    handles
+        .into_iter()
+        .map(|handle| {
+            handle
+                .join()
+                .unwrap_or_else(|_| ("unknown".into(), Err("peer query thread panicked".into())))
         })
         .collect()
 }

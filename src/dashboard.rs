@@ -375,6 +375,46 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     .metric .value.small { font-size: 15px; padding-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .statusline { flex: 0 0 auto; min-height: 22px; color: var(--muted); font-size: 13px; margin: 0 0 12px; }
     .view-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding-right: 4px; }
+    .app-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .app-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 196px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 12px;
+    }
+    .app-card:hover { border-color: #9ab2c4; }
+    .app-head { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+    .app-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background: #e6f1ef;
+      color: #0f4f49;
+      border: 1px solid #c1d8d3;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+    .app-name { min-width: 0; }
+    .app-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .app-name span { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .app-body { min-width: 0; display: grid; align-content: start; gap: 9px; }
+    .app-url { min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+    .app-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .app-actions .wide { grid-column: 1 / -1; }
+    .app-actions button { width: 100%; }
     .service-list { display: grid; gap: 8px; }
     .service-row {
       background: var(--panel);
@@ -470,6 +510,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       .nav { display: flex; }
       .sidebar-footer { margin-top: 0; margin-left: auto; }
       .summary { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+      .app-grid { grid-template-columns: 1fr; }
       .service-row { grid-template-columns: 1fr; }
       .actions { width: 100%; }
       .toast { left: 18px; max-width: calc(100vw - 36px); }
@@ -495,6 +536,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       .chip.bad { background: #3a1717; color: #fca5a5; }
       .chip.remote { background: #12313a; color: #8de7f8; }
       .pin-button.active { background: #392d12; color: #f7cc62; border-color: #8a681f; }
+      .app-icon { background: #15302d; color: #a8f0e7; border-color: #2e5d57; }
     }
   </style>
 </head>
@@ -510,7 +552,8 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         </div>
       </div>
       <nav class="nav">
-        <button id="nav-services" class="active" onclick="setView('services')">Services</button>
+        <button id="nav-apps" class="active" onclick="setView('apps')">Apps</button>
+        <button id="nav-services" onclick="setView('services')">Services</button>
         <button id="nav-ports" onclick="setView('ports')">Ports</button>
       </nav>
       <div class="sidebar-footer">
@@ -520,7 +563,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     <main class="content">
       <div class="topbar">
         <div class="title-block">
-          <h2 id="view-title">Services</h2>
+          <h2 id="view-title">Apps</h2>
           <div class="subtle" id="updated">Loading service registry</div>
         </div>
         <div class="toolbar">
@@ -541,13 +584,14 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       </div>
       <section class="summary" id="summary"></section>
       <p class="statusline" id="status">Loading services...</p>
+      <section id="apps-view" class="view-pane"></section>
       <section id="services-view" class="view-pane"></section>
       <section id="ports-view" class="view-pane hidden"></section>
     </main>
   </div>
   <script>
     let currentRows = [];
-    let currentView = 'services';
+    let currentView = 'apps';
     let busyKey = '';
     let loadingPorts = false;
     let lastFocusRefresh = 0;
@@ -576,10 +620,17 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
 
     function setView(view) {
       currentView = view;
+      document.getElementById('nav-apps').classList.toggle('active', view === 'apps');
       document.getElementById('nav-services').classList.toggle('active', view === 'services');
       document.getElementById('nav-ports').classList.toggle('active', view === 'ports');
-      document.getElementById('view-title').textContent = view === 'services' ? 'Services' : 'Ports';
+      document.getElementById('view-title').textContent = viewTitle(view);
       render();
+    }
+
+    function viewTitle(view) {
+      if (view === 'apps') return 'Apps';
+      if (view === 'services') return 'Services';
+      return 'Ports';
     }
 
     function setFilter(value) {
@@ -607,13 +658,15 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
       document.getElementById('status').textContent = visibleRows.length + ' shown / ' + rows.length + ' service record(s), ' + peers.length + ' peer source(s), ledger OK';
       document.getElementById('summary').innerHTML = `
-        ${metric('Services', rows.length)}
+        ${metric(currentView === 'apps' ? 'Apps' : 'Services', rows.length)}
         ${metric('Running', running)}
         ${metric('Stale', stale)}
         ${metric('Peers', peers.length ? peers.join(', ') : 'none', true)}
       `;
+      document.getElementById('apps-view').classList.toggle('hidden', currentView !== 'apps');
       document.getElementById('services-view').classList.toggle('hidden', currentView !== 'services');
       document.getElementById('ports-view').classList.toggle('hidden', currentView !== 'ports');
+      renderApps(sortedRows);
       renderServices(sortedRows);
       renderPorts(sortedRows);
     }
@@ -686,6 +739,100 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       }
       savePinnedIds();
       render();
+    }
+
+    function renderApps(rows) {
+      const target = document.getElementById('apps-view');
+      if (!rows.length) {
+        target.innerHTML = '<div class="empty">No apps recorded.</div>';
+        return;
+      }
+      target.innerHTML = `<div class="app-grid">${rows.map(row => {
+        const remote = isRemote(row);
+        const state = serviceState(row.runtime_status);
+        const pinned = pinnedIds.has(row.id);
+        const primary = appPrimary(row);
+        const secondary = appSecondary(row);
+        const busy = busyKey === row.id + ':' + primary.action;
+        const secondaryBusy = busyKey === row.id + ':' + secondary.action;
+        const restartAction = remote ? 'remote-restart' : 'restart';
+        const restartBusy = busyKey === row.id + ':' + restartAction;
+        return `
+          <article class="app-card">
+            <div class="app-head">
+              <button class="app-icon" onclick="runAppPrimary('${escapeAttr(row.id)}')" title="Open ${escapeAttr(row.title || row.id)}">${escapeHtml(appInitials(row))}</button>
+              <div class="app-name">
+                <strong>${escapeHtml(row.title || row.id)}</strong>
+                <span>${escapeHtml(appSubtitle(row))}</span>
+              </div>
+              <button class="pin-button ${pinned ? 'active' : ''}" title="${pinned ? 'Unpin app' : 'Pin app'}" onclick="togglePin('${escapeAttr(row.id)}')">${pinned ? '★' : '☆'}</button>
+            </div>
+            <div class="app-body">
+              <div class="chips">
+                ${chip(state.label, state.kind)}
+                ${chip(remote ? 'remote' : 'local', remote ? 'remote' : 'ok')}
+                ${chip(':' + row.port, 'muted')}
+                ${row.startup_policy ? chip(row.startup_policy, 'muted') : ''}
+              </div>
+              <div class="app-url">${escapeHtml(row.url || '')}</div>
+            </div>
+            <div class="app-actions">
+              <button class="${primary.className} primary-action wide" ${busy ? 'disabled' : ''} onclick="runAppPrimary('${escapeAttr(row.id)}')">${busy ? 'Working' : primary.label}</button>
+              <button class="${secondary.className}" ${secondaryBusy ? 'disabled' : ''} onclick="runAppSecondary('${escapeAttr(row.id)}')">${secondaryBusy ? 'Working' : secondary.label}</button>
+              <button ${restartBusy ? 'disabled' : ''} onclick="runAction('${escapeAttr(row.id)}', '${restartAction}')">${restartBusy ? 'Working' : 'Restart'}</button>
+            </div>
+          </article>`;
+      }).join('')}</div>`;
+    }
+
+    function appPrimary(row) {
+      const state = serviceState(row.runtime_status);
+      if (state.key === 'running') return { action: 'open', label: 'Open', className: 'primary' };
+      if (row.startup_policy === 'on_demand') return { action: 'open', label: 'Start & Open', className: 'primary' };
+      return { action: isRemote(row) ? 'remote-up' : 'up', label: 'Start', className: 'primary' };
+    }
+
+    function appSecondary(row) {
+      const state = serviceState(row.runtime_status);
+      if (state.key === 'running') return { action: isRemote(row) ? 'remote-down' : 'down', label: 'Stop', className: 'warn' };
+      return { action: 'open', label: 'Open', className: 'secondary' };
+    }
+
+    function runAppPrimary(id) {
+      const row = currentRows.find(candidate => candidate.id === id);
+      if (!row) return;
+      const primary = appPrimary(row);
+      if (primary.action === 'open') {
+        openService(id);
+      } else {
+        runAction(id, primary.action);
+      }
+    }
+
+    function runAppSecondary(id) {
+      const row = currentRows.find(candidate => candidate.id === id);
+      if (!row) return;
+      const secondary = appSecondary(row);
+      if (secondary.action === 'open') {
+        openService(id);
+      } else {
+        runAction(id, secondary.action);
+      }
+    }
+
+    function appSubtitle(row) {
+      const remote = isRemote(row);
+      const location = remote ? `${row.owner_host} via ${row.source_machine}` : row.owner_host;
+      return `${row.id} - ${location}`;
+    }
+
+    function appInitials(row) {
+      const source = String(row.title || row.id || 'app').trim();
+      const parts = source.split(/[\s._-]+/).filter(Boolean);
+      const letters = parts.length > 1
+        ? parts.slice(0, 2).map(part => part[0]).join('')
+        : source.slice(0, 2);
+      return letters.toUpperCase();
     }
 
     function renderServices(rows) {
@@ -783,7 +930,10 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     }
 
     function isRemote(row) {
-      return Boolean(row.source_machine && row.local_machine_id && row.source_machine !== row.local_machine_id);
+      return Boolean(row?.local_machine_id && (
+        (row.source_machine && row.source_machine !== row.local_machine_id) ||
+        (row.owner_host && row.owner_host !== row.local_machine_id)
+      ));
     }
 
     function openDashboard() {
@@ -848,7 +998,28 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     }
 
     function openService(id) {
+      const row = currentRows.find(candidate => candidate.id === id);
+      if (canDirectOpen(row)) {
+        openUrlDirect(row.url);
+        showToast('opened ' + row.url);
+        return;
+      }
       runAction(id, 'open');
+    }
+
+    function canDirectOpen(row) {
+      if (!row || row.direct_open !== true || !row.url) return false;
+      return serviceState(row.runtime_status).key === 'running';
+    }
+
+    function openUrlDirect(url) {
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
     }
 
     function renameService(id) {

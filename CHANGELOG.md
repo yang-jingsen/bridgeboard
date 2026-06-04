@@ -1,5 +1,15 @@
 # Bridgeboard Changelog
 
+- 2026-06-04: Added an app-launcher dashboard mode. The dashboard now opens on
+  an `Apps` panel for recorded web apps, with `Services` and `Ports` kept as
+  operator views. API rows include `direct_open`, allowing already-running
+  services with reachable URLs to open immediately without a backend action,
+  while on-demand starts and missing SSH local forwards still use Bridgeboard's
+  managed action path. Peer registry fetches now run in parallel to reduce
+  dashboard load time when multiple SSH peers are configured. Validation:
+  `cargo fmt --check` passed; `cargo test` passed with 10 tests;
+  `cargo check --bins` passed; a local `--no-peers` dashboard smoke produced
+  `/tmp/bridgeboard-apps-fastopen.png`.
 - 2026-06-02: Hardened the local control surface before public release.
   Dashboard state-changing APIs now require `POST` plus a random per-process
   `X-Bridgeboard-Token`, and `bridgeboard serve` refuses non-loopback binds

@@ -38,6 +38,7 @@ pub struct PortRow {
     pub desired_state: String,
     pub runtime_status: String,
     pub url: String,
+    pub direct_open: bool,
     pub network_url: Option<String>,
     pub pid_source: Option<String>,
     pub notes: Option<String>,
@@ -148,7 +149,27 @@ fn port_rows_from_exports(
             } else {
                 service.tunnel_modes.contains(&TunnelMode::LocalForward)
             };
-            let url = if export.machine_id == local_machine_id {
+            let tunnel_owner = if env.app.peers.contains_key(&service.owner_host) {
+                service.owner_host.as_str()
+            } else {
+                export.machine_id.as_str()
+            };
+            let local_tunnel_active = if is_remote_record && local_forward {
+                state
+                    .tunnels
+                    .get(&process::tunnel_key(
+                        &service.id,
+                        TunnelMode::LocalForward,
+                        tunnel_owner,
+                    ))
+                    .and_then(|tunnel| tunnel.pid)
+                    .map(process::pid_alive)
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let direct_open = !is_remote_record || !local_forward || local_tunnel_active;
+            let url = if !is_remote_record {
                 service
                     .open_url
                     .clone()
@@ -186,6 +207,7 @@ fn port_rows_from_exports(
                     .runtime_status
                     .unwrap_or_else(|| "remote-record".into()),
                 url,
+                direct_open,
                 network_url: service.network_url,
                 pid_source: service.pid_source,
                 notes: service.notes,
