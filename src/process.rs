@@ -275,33 +275,48 @@ fn quote_cmd_path(path: &Path) -> String {
 }
 
 pub fn pid_listening_on_port(port: u16) -> Result<Option<u32>> {
+    Ok(pids_listening_on_port(port)?.into_iter().next())
+}
+
+pub fn pids_listening_on_port(port: u16) -> Result<Vec<u32>> {
     #[cfg(windows)]
     {
         let script = format!(
-            "$p = Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess; if ($p) {{ $p }}"
+            "Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique"
         );
         let output = command("powershell")
             .args(["-NoProfile", "-Command", &script])
             .output()
-            .with_context(|| format!("query Windows listener PID on port {port}"))?;
+            .with_context(|| format!("query Windows listener PIDs on port {port}"))?;
         if !output.status.success() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
-        Ok(String::from_utf8_lossy(&output.stdout)
+        let mut pids = String::from_utf8_lossy(&output.stdout)
             .lines()
-            .find_map(|line| line.trim().parse::<u32>().ok()))
+            .filter_map(|line| line.trim().parse::<u32>().ok())
+            .collect::<Vec<_>>();
+        pids.sort_unstable();
+        pids.dedup();
+        Ok(pids)
     }
     #[cfg(unix)]
     {
-        if let Some(pid) = pid_from_lsof(port)? {
-            return Ok(Some(pid));
-        }
-        pid_from_ss(port)
+        let mut pids = pids_from_lsof(port)?;
+        pids.extend(pids_from_ss(port)?);
+        pids.sort_unstable();
+        pids.dedup();
+        Ok(pids)
     }
 }
 
 pub fn service_listener_pid(cfg: &BridgeConfig) -> Option<u32> {
     service_listener_port(cfg).and_then(|port| pid_listening_on_port(port).ok().flatten())
+}
+
+fn service_listener_pids(cfg: &BridgeConfig) -> Vec<u32> {
+    service_listener_port(cfg)
+        .and_then(|port| pids_listening_on_port(port).ok())
+        .unwrap_or_default()
 }
 
 fn service_listener_port(cfg: &BridgeConfig) -> Option<u16> {
@@ -318,7 +333,17 @@ fn configured_listener_port(cfg: &BridgeConfig) -> u16 {
 pub fn managed_service_status(cfg: &BridgeConfig) -> String {
     let pid_file_pid = service_pid_path(cfg).and_then(|path| read_pid_file(&path));
     let pid_file_alive = pid_file_pid.map(pid_alive).unwrap_or(false);
-    let listener_pid = service_listener_pid(cfg);
+    let listener_pids = service_listener_pids(cfg);
+    if listener_pids.len() > 1 {
+        return match (pid_file_pid, pid_file_alive) {
+            (Some(pid), true) => {
+                format!("multi-listener:{};pid_file:{pid}", pid_list(&listener_pids))
+            }
+            (Some(pid), false) => format!("stale:{pid};listeners:{}", pid_list(&listener_pids)),
+            (None, _) => format!("multi-listener:{}", pid_list(&listener_pids)),
+        };
+    }
+    let listener_pid = listener_pids.first().copied();
     match (pid_file_pid, pid_file_alive, listener_pid) {
         (Some(pid), true, Some(listener)) if pid == listener => format!("running:{pid}"),
         (Some(pid), true, Some(listener)) => {
@@ -336,6 +361,20 @@ pub fn managed_service_alive(cfg: &BridgeConfig) -> bool {
     managed_service_status(cfg).starts_with("running:")
 }
 
+fn pid_list(pids: &[u32]) -> String {
+    pids.iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn describe_pid_list(pids: &[u32]) -> String {
+    pids.iter()
+        .map(|pid| describe_pid(*pid))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn port_from_pid_source(source: Option<&str>) -> Option<u16> {
     source?
         .strip_prefix("port:")
@@ -343,34 +382,36 @@ fn port_from_pid_source(source: Option<&str>) -> Option<u16> {
 }
 
 #[cfg(unix)]
-fn pid_from_lsof(port: u16) -> Result<Option<u32>> {
+fn pids_from_lsof(port: u16) -> Result<Vec<u32>> {
     let output = match command("lsof")
         .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
         .output()
     {
         Ok(output) => output,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(err).with_context(|| format!("run lsof for port {port}")),
     };
     if !output.status.success() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
-        .find_map(|line| line.trim().parse::<u32>().ok()))
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect())
 }
 
 #[cfg(unix)]
-fn pid_from_ss(port: u16) -> Result<Option<u32>> {
+fn pids_from_ss(port: u16) -> Result<Vec<u32>> {
     let output = match command("ss").args(["-ltnp"]).output() {
         Ok(output) => output,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(err).context("run ss"),
     };
     if !output.status.success() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let needle = format!(":{port} ");
+    let mut pids = Vec::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         if !line.contains(&needle) {
             continue;
@@ -379,11 +420,11 @@ fn pid_from_ss(port: u16) -> Result<Option<u32>> {
             let after = &line[pid_start + 4..];
             let pid_text: String = after.chars().take_while(|ch| ch.is_ascii_digit()).collect();
             if let Ok(pid) = pid_text.parse::<u32>() {
-                return Ok(Some(pid));
+                pids.push(pid);
             }
         }
     }
-    Ok(None)
+    Ok(pids)
 }
 
 pub fn read_pid_file(path: &Path) -> Option<u32> {
@@ -401,31 +442,31 @@ pub fn start_service(cfg: &BridgeConfig, state: &mut State) -> Result<u32> {
     let pid_path = service_pid_path(cfg).context("managed service pid_file is required")?;
     let pid_file_pid = read_pid_file(&pid_path);
     let live_pid_file_pid = pid_file_pid.filter(|pid| pid_alive(*pid));
-    let listener_pid = service_listener_pid(cfg);
+    let listener_pids = service_listener_pids(cfg);
     let listener_port = configured_listener_port(cfg);
-    match (live_pid_file_pid, listener_pid) {
-        (Some(pid), Some(listener)) if pid == listener => return Ok(pid),
-        (Some(pid), Some(listener)) => bail!(
-            "service `{}` pid_file points to live {}, but configured port {} is owned by {}; refusing to start over a mismatched listener",
-            cfg.id,
-            describe_pid(pid),
-            listener_port,
-            describe_pid(listener)
-        ),
-        (Some(pid), None) => bail!(
+    match live_pid_file_pid {
+        Some(pid) if listener_pids.len() == 1 && listener_pids[0] == pid => return Ok(pid),
+        Some(pid) if listener_pids.is_empty() => bail!(
             "service `{}` pid_file points to live {}, but configured port {} is not listening; run `bridgeboard restart {}` or clear the stale process/pid_file",
             cfg.id,
             describe_pid(pid),
             listener_port,
             cfg.id
         ),
-        (None, Some(listener)) => bail!(
-            "service `{}` cannot start because configured port {} is already owned by {}; stop that process or choose another fixed port",
+        Some(pid) => bail!(
+            "service `{}` pid_file points to live {}, but configured port {} is owned by {}; refusing to start over mismatched listener(s)",
+            cfg.id,
+            describe_pid(pid),
+            listener_port,
+            describe_pid_list(&listener_pids)
+        ),
+        None if !listener_pids.is_empty() => bail!(
+            "service `{}` cannot start because configured port {} is already owned by {}; stop those process(es) or choose another fixed port",
             cfg.id,
             listener_port,
-            describe_pid(listener)
+            describe_pid_list(&listener_pids)
         ),
-        (None, None) => {}
+        None => {}
     }
 
     let log_path = service_log_path(cfg).context("managed service log_file is required")?;
@@ -520,7 +561,7 @@ pub fn stop_service(cfg: &BridgeConfig, state: &mut State) -> Result<()> {
     if let Some(pid) = read_pid_file(&pid_path) {
         candidates.push((pid, "pid_file"));
     }
-    if let Some(pid) = service_listener_pid(cfg) {
+    for pid in service_listener_pids(cfg) {
         candidates.push((pid, "listener"));
     }
     candidates.sort_by_key(|(pid, _)| *pid);
@@ -559,8 +600,18 @@ fn wait_for_managed_listener(cfg: &BridgeConfig, child_pid: u32, log_path: &Path
     let deadline = Instant::now() + timeout;
     let listener_port = configured_listener_port(cfg);
     loop {
-        if let Some(listener_pid) = service_listener_pid(cfg) {
-            return Ok(listener_pid);
+        let listener_pids = service_listener_pids(cfg);
+        if listener_pids.len() == 1 {
+            return Ok(listener_pids[0]);
+        }
+        if listener_pids.len() > 1 {
+            bail!(
+                "service `{}` found multiple listeners on configured port {} after startup: {}. {}",
+                cfg.id,
+                listener_port,
+                describe_pid_list(&listener_pids),
+                log_tail_summary(log_path)
+            );
         }
         if !pid_alive(child_pid) {
             bail!(
@@ -607,7 +658,7 @@ fn kill_external_processes(cfg: &BridgeConfig) -> Result<Vec<u32>> {
     if let Some(pid) = cfg.service.pid {
         candidates.push(pid);
     }
-    if let Some(pid) = service_listener_pid(cfg) {
+    for pid in service_listener_pids(cfg) {
         candidates.push(pid);
     }
     candidates.sort_unstable();

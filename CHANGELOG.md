@@ -1,5 +1,12 @@
 # Bridgeboard Changelog
 
+- 2026-06-24: Made fixed-port listener detection set-based. Bridgeboard now
+  reads every PID listening on a configured port instead of selecting an
+  arbitrary first PID. Managed status reports `multi-listener:<pids>` when a
+  Windows port has multiple owners, and managed start/stop paths refuse or
+  clean up based on the full listener set. This prevents status from
+  oscillating between `running` and `pid-mismatch` when Windows reports
+  multiple listeners on the same port.
 - 2026-06-24: Prevented accidental deployment of the legacy Windows tray under
   the modern tray name. The root crate now exposes the fallback native Win32
   tray as `bridgeboard-win32-tray`; the `bridgeboard-tray` binary name is
