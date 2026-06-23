@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::registry::RegistryExport;
 use anyhow::Result;
+use std::io::Read;
 use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -186,21 +187,62 @@ fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "failed to capture peer command stdout".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "failed to capture peer command stderr".to_string())?;
+    let stdout_reader = thread::spawn(move || read_stream(stdout));
+    let stderr_reader = thread::spawn(move || read_stream(stderr));
+
     let start = Instant::now();
-    loop {
-        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            return child.wait_with_output().map_err(|e| e.to_string());
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            break status;
         }
         if start.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
+            let stderr = join_reader(stderr_reader, "stderr").unwrap_or_default();
+            let detail = String::from_utf8_lossy(&stderr);
+            let detail = detail.trim();
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            };
+            let _ = join_reader(stdout_reader, "stdout");
             return Err(format!(
-                "peer registry query timed out after {}s",
-                timeout.as_secs()
+                "peer registry query timed out after {}s{}",
+                timeout.as_secs(),
+                suffix
             ));
         }
         thread::sleep(Duration::from_millis(50));
-    }
+    };
+    Ok(Output {
+        status,
+        stdout: join_reader(stdout_reader, "stdout")?,
+        stderr: join_reader(stderr_reader, "stderr")?,
+    })
+}
+
+fn read_stream(mut stream: impl Read) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    stream.read_to_end(&mut output).map_err(|e| e.to_string())?;
+    Ok(output)
+}
+
+fn join_reader(
+    handle: thread::JoinHandle<Result<Vec<u8>, String>>,
+    name: &str,
+) -> Result<Vec<u8>, String> {
+    handle
+        .join()
+        .map_err(|_| format!("peer command {name} reader panicked"))?
 }
 
 #[cfg(test)]
