@@ -89,10 +89,24 @@ pub struct ServiceConfig {
     pub log_file: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_url: Option<String>,
+    #[serde(default, skip_serializing_if = "HealthExpectConfig::is_empty")]
+    pub health_expect: HealthExpectConfig,
     #[serde(default = "default_startup_timeout")]
     pub startup_timeout_sec: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct HealthExpectConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub body_contains: Vec<String>,
+}
+
+impl HealthExpectConfig {
+    pub fn is_empty(&self) -> bool {
+        self.body_contains.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +247,11 @@ pub fn validate_bridge_config(cfg: &BridgeConfig) -> Result<()> {
     if cfg.owner_host.trim().is_empty() {
         bail!("owner_host is required");
     }
+    for expected in &cfg.service.health_expect.body_contains {
+        if expected.is_empty() {
+            bail!("service.health_expect.body_contains entries must not be empty");
+        }
+    }
     if !(24000..=24999).contains(&cfg.port) {
         bail!(
             "port {} is outside reserved Bridgeboard range 24000-24999",
@@ -337,6 +356,7 @@ mod tests {
                 pid: None,
                 log_file: Some("server.log".into()),
                 health_url: None,
+                health_expect: HealthExpectConfig::default(),
                 startup_timeout_sec: 10,
                 notes: None,
             },
@@ -396,6 +416,7 @@ service:
                 pid: None,
                 log_file: None,
                 health_url: None,
+                health_expect: HealthExpectConfig::default(),
                 startup_timeout_sec: 10,
                 notes: None,
             },

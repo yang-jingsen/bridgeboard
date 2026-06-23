@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use bridgeboard::config::{
-    self, load_bridge_config, BridgeConfig, LifecycleConfig, ServiceConfig, ServiceMode,
-    TunnelConfig, TunnelMode,
+    self, load_bridge_config, BridgeConfig, HealthExpectConfig, LifecycleConfig, ServiceConfig,
+    ServiceMode, TunnelConfig, TunnelMode,
 };
 use bridgeboard::core::{self, BridgeEnv};
 use bridgeboard::dashboard;
@@ -118,6 +118,8 @@ struct HandoffArgs {
     log_file: Option<PathBuf>,
     #[arg(long)]
     health_url: Option<String>,
+    #[arg(long = "health-contains")]
+    health_contains: Vec<String>,
     #[arg(long, default_value_t = 5)]
     health_timeout_sec: u64,
     #[arg(long)]
@@ -454,6 +456,9 @@ fn cmd_handoff(env: &BridgeEnv, args: HandoffArgs) -> Result<()> {
             pid,
             log_file: log_file.clone(),
             health_url: args.health_url.clone(),
+            health_expect: HealthExpectConfig {
+                body_contains: args.health_contains.clone(),
+            },
             startup_timeout_sec: args.health_timeout_sec,
             notes: args.note.clone(),
         },
@@ -468,7 +473,7 @@ fn cmd_handoff(env: &BridgeEnv, args: HandoffArgs) -> Result<()> {
     config::validate_bridge_config(&cfg)?;
 
     let (last_health, last_status) = match cfg.service.health_url.as_ref() {
-        Some(url) => match wait_health(url, args.health_timeout_sec) {
+        Some(url) => match wait_health(url, args.health_timeout_sec, &cfg.service.health_expect) {
             Ok(status) => {
                 messages.push(format!("health: {status}"));
                 (Some(status), Some("handoff-healthy".to_string()))
@@ -711,10 +716,10 @@ fn wait_pid_listening_on_port(port: u16, timeout_sec: u64) -> Result<Option<u32>
     }
 }
 
-fn wait_health(url: &str, timeout_sec: u64) -> Result<String> {
+fn wait_health(url: &str, timeout_sec: u64, expect: &HealthExpectConfig) -> Result<String> {
     let deadline = Instant::now() + Duration::from_secs(timeout_sec.max(1));
     loop {
-        match health::check_http(url, Duration::from_secs(1)) {
+        match health::check_http_with_expect(url, Duration::from_secs(1), expect) {
             Ok(status) => return Ok(status),
             Err(err) => {
                 if Instant::now() >= deadline {

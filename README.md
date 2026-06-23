@@ -127,6 +127,9 @@ service:
   pid_file: .bridgeboard/server.pid
   log_file: .bridgeboard/server.log
   health_url: http://127.0.0.1:24001/
+  health_expect:
+    body_contains:
+      - '"service": "image-review-portal"'
   startup_timeout_sec: 10
 tunnel:
   modes: [local_forward, reverse_forward]
@@ -187,6 +190,7 @@ bridgeboard handoff \
   --owner-host gpu-box \
   --pid-from-port \
   --health-url http://127.0.0.1:24050/ \
+  --health-contains '"version": 3' \
   --require-healthy \
   --network-url http://100.x.y.z:24050/ \
   --cwd /path/to/project \
@@ -197,7 +201,7 @@ bridgeboard handoff \
   --note "started by agent outside Bridgeboard"
 ```
 
-`handoff` creates an `external` record and defaults to `local_forward`, so peers can create an SSH local tunnel on the same fixed port. This default comes from `defaults.handoff_tunnel_modes`; set it once in Bridgeboard config instead of repeating `--tunnel-mode local_forward` for every agent. It checks `health_url` when provided, records the result in Bridgeboard state, and can resolve the real listening PID from the port with `--pid-from-port`. Add `--require-healthy` when a failed health check should reject the handoff instead of recording an unhealthy service. Add `--no-tunnel` for a strictly owner-local record.
+`handoff` creates an `external` record and defaults to `local_forward`, so peers can create an SSH local tunnel on the same fixed port. This default comes from `defaults.handoff_tunnel_modes`; set it once in Bridgeboard config instead of repeating `--tunnel-mode local_forward` for every agent. It checks `health_url` when provided, records the result in Bridgeboard state, and can resolve the real listening PID from the port with `--pid-from-port`. Add `--health-contains <text>` one or more times when the response body must contain version markers such as `"version": 3`; managed YAML configs can use `service.health_expect.body_contains` for the same check. Add `--require-healthy` when a failed health check should reject the handoff instead of recording an unhealthy service. Add `--no-tunnel` for a strictly owner-local record.
 
 On Windows, `--detach scheduled-task` makes Bridgeboard create and run a Windows Scheduled Task instead of relying on an SSH session-owned background process. It requires `--start-command`, writes a UTF-8 `.cmd` wrapper next to the handoff YAML, redirects output to `--log-file` or a default handoff log, starts the task, then uses the service port to find the real listener PID.
 

@@ -1,5 +1,14 @@
 # Bridgeboard Changelog
 
+- 2026-06-24: Added response-body health expectations. Service configs can now
+  set `service.health_expect.body_contains`, and `bridgeboard handoff` accepts
+  repeatable `--health-contains <text>` checks. Health checks still require a
+  2xx/3xx response and now also fail when required body markers such as
+  `"version": 3` are missing. Managed service startup records `healthy` or
+  `unhealthy` plus the last health result in state so the dashboard can show
+  business-version mismatches instead of only process liveness. Validation:
+  `cargo fmt --check` passed; `cargo test` passed with 13 tests;
+  `cargo check --bins` passed.
 - 2026-06-24: Hardened managed service process/port consistency. Managed
   service status now compares the pid_file PID with the actual configured port
   listener, reporting `pid-mismatch`, `no-listener`, `stale:...;listener:...`,

@@ -862,9 +862,26 @@ fn start_owned_service(
         messages.push(format!("service {} is external; recorded only", cfg.id));
     }
     if let Some(url) = &cfg.service.health_url {
-        match health::check_http(url, Duration::from_secs(cfg.service.startup_timeout_sec)) {
-            Ok(status) => messages.push(format!("health: {status}")),
-            Err(err) => messages.push(format!("warning: health check failed: {err}")),
+        match health::check_http_with_expect(
+            url,
+            Duration::from_secs(cfg.service.startup_timeout_sec),
+            &cfg.service.health_expect,
+        ) {
+            Ok(status) => {
+                messages.push(format!("health: {status}"));
+                let entry = state.services.entry(cfg.id.clone()).or_default();
+                entry.last_health = Some(status);
+                entry.last_status = Some("healthy".into());
+                entry.updated_at = Some(crate::time::now_iso());
+            }
+            Err(err) => {
+                let text = err.to_string();
+                messages.push(format!("warning: health check failed: {text}"));
+                let entry = state.services.entry(cfg.id.clone()).or_default();
+                entry.last_health = Some(format!("failed: {text}"));
+                entry.last_status = Some("unhealthy".into());
+                entry.updated_at = Some(crate::time::now_iso());
+            }
         }
     }
     Ok(())
