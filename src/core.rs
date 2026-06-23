@@ -881,10 +881,7 @@ fn is_local_managed_with_startup(
 }
 
 fn managed_service_alive(cfg: &BridgeConfig) -> bool {
-    config::service_pid_path(cfg)
-        .and_then(|path| process::read_pid_file(&path))
-        .map(process::pid_alive)
-        .unwrap_or(false)
+    process::managed_service_alive(cfg)
 }
 
 fn desired_for(state: &State, id: &str) -> Option<DesiredState> {

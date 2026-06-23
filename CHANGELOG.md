@@ -1,5 +1,16 @@
 # Bridgeboard Changelog
 
+- 2026-06-24: Hardened managed service process/port consistency. Managed
+  service status now compares the pid_file PID with the actual configured port
+  listener, reporting `pid-mismatch`, `no-listener`, `stale:...;listener:...`,
+  or `port-owned` instead of blindly treating a live pid_file process as
+  running. Managed `up` refuses to start over a stale listener owned by another
+  PID, waits for the launched service to bind the configured port, records the
+  real listener PID, and includes recent log lines when startup exits or times
+  out. Managed `stop` now attempts both the pid_file PID and fixed-port
+  listener PID, surfacing `taskkill`/`kill` output on failure. Validation:
+  `cargo fmt --check` passed; `cargo test` passed with 11 tests;
+  `cargo check --bins` passed.
 - 2026-06-23: Fixed Windows remote SSH tunnels started through Bridgeboard.
   Windows tunnel startup now uses a one-shot Scheduled Task so `ssh -N`
   survives the OpenSSH session that invoked `bridgeboard up` remotely. Tunnel

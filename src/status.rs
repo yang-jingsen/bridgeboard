@@ -1,5 +1,5 @@
-use crate::config::{service_pid_path, BridgeConfig, RestartPolicy, ServiceMode, StartupPolicy};
-use crate::process::{pid_alive, service_listener_pid};
+use crate::config::{BridgeConfig, RestartPolicy, ServiceMode, StartupPolicy};
+use crate::process::{managed_service_status, pid_alive, service_listener_pid};
 use crate::registry::ServiceExport;
 use crate::state::{DesiredState, State};
 use serde::Serialize;
@@ -31,14 +31,7 @@ pub fn row_for(cfg: &BridgeConfig, machine_id: &str, state: &State) -> StatusRow
     let owner_local = cfg.owner_host == machine_id;
     let service = if owner_local {
         match cfg.service.mode {
-            ServiceMode::Managed => match service_pid_path(cfg)
-                .and_then(|path| std::fs::read_to_string(path).ok())
-                .and_then(|s| s.trim().parse().ok())
-            {
-                Some(pid) if pid_alive(pid) => format!("running:{pid}"),
-                Some(pid) => format!("stale:{pid}"),
-                None => "stopped".into(),
-            },
+            ServiceMode::Managed => managed_service_status(cfg),
             ServiceMode::External => {
                 if let Some(pid) = service_listener_pid(cfg) {
                     format!("external-running:{pid}")

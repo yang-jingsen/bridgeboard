@@ -6,10 +6,10 @@ use anyhow::{bail, Context, Result};
 use std::fs::{self, OpenOptions};
 use std::path::Path;
 use std::process::{Command, Stdio};
-#[cfg(windows)]
 use std::thread;
 #[cfg(windows)]
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
+use std::time::{Duration, Instant};
 
 fn command(program: &str) -> Command {
     crate::command::quiet_command(program)
@@ -39,21 +39,70 @@ pub fn pid_alive(pid: u32) -> bool {
 pub fn kill_pid(pid: u32) -> Result<()> {
     #[cfg(unix)]
     {
-        let status = command("kill").arg(pid.to_string()).status()?;
-        if !status.success() {
-            bail!("kill failed for pid {pid}");
+        let output = command("kill").arg(pid.to_string()).output()?;
+        if !output.status.success() {
+            bail!(
+                "kill failed for {}: {}",
+                describe_pid(pid),
+                output_detail(&output)
+            );
         }
     }
     #[cfg(windows)]
     {
-        let status = command("taskkill")
+        let output = command("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status()?;
-        if !status.success() {
-            bail!("taskkill failed for pid {pid}");
+            .output()?;
+        if !output.status.success() {
+            bail!(
+                "taskkill failed for {}: {}",
+                describe_pid(pid),
+                output_detail(&output)
+            );
         }
     }
     Ok(())
+}
+
+fn output_detail(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("stdout: {stdout}; stderr: {stderr}"),
+        (false, true) => stdout,
+        (true, false) => stderr,
+        (true, true) => format!("exit status {}", output.status),
+    }
+}
+
+pub fn describe_pid(pid: u32) -> String {
+    process_command_line(pid)
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| format!("pid {pid} ({})", line.trim()))
+        .unwrap_or_else(|| format!("pid {pid}"))
+}
+
+#[cfg(windows)]
+fn process_command_line(pid: u32) -> Option<String> {
+    let script = format!(
+        "$p = Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\" -ErrorAction SilentlyContinue; if ($p) {{ if ($p.CommandLine) {{ $p.CommandLine }} elseif ($p.ExecutablePath) {{ $p.ExecutablePath }} else {{ $p.Name }} }}"
+    );
+    command("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(unix)]
+fn process_command_line(pid: u32) -> Option<String> {
+    command("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 pub fn run_shell_command(command_text: &str, cwd: Option<&Path>) -> Result<()> {
@@ -262,6 +311,31 @@ fn service_listener_port(cfg: &BridgeConfig) -> Option<u16> {
         .or(Some(cfg.port))
 }
 
+fn configured_listener_port(cfg: &BridgeConfig) -> u16 {
+    service_listener_port(cfg).unwrap_or(cfg.port)
+}
+
+pub fn managed_service_status(cfg: &BridgeConfig) -> String {
+    let pid_file_pid = service_pid_path(cfg).and_then(|path| read_pid_file(&path));
+    let pid_file_alive = pid_file_pid.map(pid_alive).unwrap_or(false);
+    let listener_pid = service_listener_pid(cfg);
+    match (pid_file_pid, pid_file_alive, listener_pid) {
+        (Some(pid), true, Some(listener)) if pid == listener => format!("running:{pid}"),
+        (Some(pid), true, Some(listener)) => {
+            format!("pid-mismatch:{pid};listener:{listener}")
+        }
+        (Some(pid), true, None) => format!("no-listener:{pid}"),
+        (Some(pid), false, Some(listener)) => format!("stale:{pid};listener:{listener}"),
+        (Some(pid), false, None) => format!("stale:{pid}"),
+        (None, _, Some(listener)) => format!("port-owned:{listener}"),
+        (None, _, None) => "stopped".into(),
+    }
+}
+
+pub fn managed_service_alive(cfg: &BridgeConfig) -> bool {
+    managed_service_status(cfg).starts_with("running:")
+}
+
 fn port_from_pid_source(source: Option<&str>) -> Option<u16> {
     source?
         .strip_prefix("port:")
@@ -325,10 +399,33 @@ pub fn start_service(cfg: &BridgeConfig, state: &mut State) -> Result<u32> {
         );
     }
     let pid_path = service_pid_path(cfg).context("managed service pid_file is required")?;
-    if let Some(pid) = read_pid_file(&pid_path) {
-        if pid_alive(pid) {
-            return Ok(pid);
-        }
+    let pid_file_pid = read_pid_file(&pid_path);
+    let live_pid_file_pid = pid_file_pid.filter(|pid| pid_alive(*pid));
+    let listener_pid = service_listener_pid(cfg);
+    let listener_port = configured_listener_port(cfg);
+    match (live_pid_file_pid, listener_pid) {
+        (Some(pid), Some(listener)) if pid == listener => return Ok(pid),
+        (Some(pid), Some(listener)) => bail!(
+            "service `{}` pid_file points to live {}, but configured port {} is owned by {}; refusing to start over a mismatched listener",
+            cfg.id,
+            describe_pid(pid),
+            listener_port,
+            describe_pid(listener)
+        ),
+        (Some(pid), None) => bail!(
+            "service `{}` pid_file points to live {}, but configured port {} is not listening; run `bridgeboard restart {}` or clear the stale process/pid_file",
+            cfg.id,
+            describe_pid(pid),
+            listener_port,
+            cfg.id
+        ),
+        (None, Some(listener)) => bail!(
+            "service `{}` cannot start because configured port {} is already owned by {}; stop that process or choose another fixed port",
+            cfg.id,
+            listener_port,
+            describe_pid(listener)
+        ),
+        (None, None) => {}
     }
 
     let log_path = service_log_path(cfg).context("managed service log_file is required")?;
@@ -356,7 +453,8 @@ pub fn start_service(cfg: &BridgeConfig, state: &mut State) -> Result<u32> {
     let child = command
         .spawn()
         .with_context(|| format!("start service `{}`", cfg.id))?;
-    let pid = child.id();
+    let child_pid = child.id();
+    let pid = wait_for_managed_listener(cfg, child_pid, &log_path)?;
     fs::write(&pid_path, format!("{pid}\n"))?;
     let desired = state.services.get(&cfg.id).and_then(|entry| entry.desired);
     state.services.insert(
@@ -418,9 +516,25 @@ pub fn stop_service(cfg: &BridgeConfig, state: &mut State) -> Result<()> {
         return Ok(());
     }
     let pid_path = service_pid_path(cfg).context("managed service pid_file is required")?;
+    let mut candidates = Vec::new();
     if let Some(pid) = read_pid_file(&pid_path) {
+        candidates.push((pid, "pid_file"));
+    }
+    if let Some(pid) = service_listener_pid(cfg) {
+        candidates.push((pid, "listener"));
+    }
+    candidates.sort_by_key(|(pid, _)| *pid);
+    candidates.dedup_by_key(|(pid, _)| *pid);
+    for (pid, source) in candidates {
         if pid_alive(pid) {
-            kill_pid(pid)?;
+            kill_pid(pid).with_context(|| {
+                format!(
+                    "stop managed service `{}` {} {}",
+                    cfg.id,
+                    source,
+                    describe_pid(pid)
+                )
+            })?;
         }
     }
     let _ = fs::remove_file(&pid_path);
@@ -438,6 +552,54 @@ pub fn stop_service(cfg: &BridgeConfig, state: &mut State) -> Result<()> {
         },
     );
     Ok(())
+}
+
+fn wait_for_managed_listener(cfg: &BridgeConfig, child_pid: u32, log_path: &Path) -> Result<u32> {
+    let timeout = Duration::from_secs(cfg.service.startup_timeout_sec.max(1));
+    let deadline = Instant::now() + timeout;
+    let listener_port = configured_listener_port(cfg);
+    loop {
+        if let Some(listener_pid) = service_listener_pid(cfg) {
+            return Ok(listener_pid);
+        }
+        if !pid_alive(child_pid) {
+            bail!(
+                "service `{}` process {} exited before configured port {} started listening. {}",
+                cfg.id,
+                describe_pid(child_pid),
+                listener_port,
+                log_tail_summary(log_path)
+            );
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "service `{}` process {} did not listen on configured port {} within {}s. {}",
+                cfg.id,
+                describe_pid(child_pid),
+                listener_port,
+                timeout.as_secs(),
+                log_tail_summary(log_path)
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn log_tail_summary(path: &Path) -> String {
+    let Ok(bytes) = fs::read(path) else {
+        return format!("log unavailable: {}", path.display());
+    };
+    let text = String::from_utf8_lossy(&bytes).replace('\0', "");
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return format!("log is empty: {}", path.display());
+    }
+    let start = lines.len().saturating_sub(20);
+    format!(
+        "last log lines from {}:\n{}",
+        path.display(),
+        lines[start..].join("\n")
+    )
 }
 
 fn kill_external_processes(cfg: &BridgeConfig) -> Result<Vec<u32>> {

@@ -1,6 +1,4 @@
-use crate::config::{
-    load_bridge_config, service_pid_path, BridgeConfig, LifecycleConfig, ServiceMode, TunnelMode,
-};
+use crate::config::{load_bridge_config, BridgeConfig, LifecycleConfig, ServiceMode, TunnelMode};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -185,14 +183,7 @@ fn runtime_status(cfg: &BridgeConfig, machine_id: &str) -> Option<String> {
         return None;
     }
     match cfg.service.mode {
-        ServiceMode::Managed => match service_pid_path(cfg)
-            .and_then(|path| fs::read_to_string(path).ok())
-            .and_then(|text| text.trim().parse().ok())
-        {
-            Some(pid) if crate::process::pid_alive(pid) => Some(format!("running:{pid}")),
-            Some(pid) => Some(format!("stale:{pid}")),
-            None => Some("stopped".into()),
-        },
+        ServiceMode::Managed => Some(crate::process::managed_service_status(cfg)),
         ServiceMode::External => {
             if let Some(pid) = crate::process::service_listener_pid(cfg) {
                 Some(format!("external-running:{pid}"))
