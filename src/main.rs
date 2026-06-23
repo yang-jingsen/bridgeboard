@@ -38,10 +38,11 @@ struct Cli {
 enum Command {
     Handoff(HandoffArgs),
     Register(RegisterArgs),
+    Unregister(UnregisterArgs),
     List(ListArgs),
     Status(StatusArgs),
     Ports(PortsArgs),
-    Up(IdArgs),
+    Up(UpArgs),
     RemoteUp(IdArgs),
     RemoteDown(IdArgs),
     RemoteRestart(IdArgs),
@@ -77,6 +78,20 @@ struct RegisterArgs {
     config_path: PathBuf,
     #[arg(long)]
     skip_peers: bool,
+}
+
+#[derive(Args)]
+struct UnregisterArgs {
+    id: String,
+    #[arg(long)]
+    delete_config: bool,
+}
+
+#[derive(Args)]
+struct UpArgs {
+    id: String,
+    #[arg(long, visible_alias = "host")]
+    peer: Option<String>,
 }
 
 #[derive(Args)]
@@ -257,10 +272,14 @@ fn dispatch(env: BridgeEnv, command: Command) -> Result<()> {
     match command {
         Command::Handoff(args) => cmd_handoff(&env, args),
         Command::Register(args) => cmd_register(&env, args),
+        Command::Unregister(args) => cmd_unregister(&env, args),
         Command::List(args) => cmd_list(&env, args),
         Command::Status(args) => cmd_status(&env, args),
         Command::Ports(args) => cmd_ports(&env, args),
-        Command::Up(args) => print_lines(core::up(&env, &args.id)?),
+        Command::Up(args) => match args.peer {
+            Some(peer) => print_lines(core::up_from_peer(&env, &peer, &args.id)?),
+            None => print_lines(core::up(&env, &args.id)?),
+        },
         Command::RemoteUp(args) => print_lines(core::remote_up(&env, &args.id)?),
         Command::RemoteDown(args) => print_lines(core::remote_down(&env, &args.id)?),
         Command::RemoteRestart(args) => print_lines(core::remote_restart(&env, &args.id)?),
@@ -504,6 +523,34 @@ fn cmd_register(env: &BridgeEnv, args: RegisterArgs) -> Result<()> {
     validate_registry_ports(env, &registry, !args.skip_peers)?;
     registry.save(&env.paths.registry_file)?;
     println!("registered {} on port {}", cfg.id, cfg.port);
+    Ok(())
+}
+
+fn cmd_unregister(env: &BridgeEnv, args: UnregisterArgs) -> Result<()> {
+    let mut registry = Registry::load(&env.paths.registry_file)?;
+    let Some(entry) = registry.unregister(&args.id) else {
+        bail!("service `{}` is not registered", args.id);
+    };
+    registry.save(&env.paths.registry_file)?;
+    println!(
+        "unregistered {} ({})",
+        entry.id,
+        entry.config_path.display()
+    );
+    if args.delete_config {
+        match fs::remove_file(&entry.config_path) {
+            Ok(()) => println!("deleted {}", entry.config_path.display()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                println!(
+                    "warning: config already missing: {}",
+                    entry.config_path.display()
+                );
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("delete {}", entry.config_path.display()));
+            }
+        }
+    }
     Ok(())
 }
 

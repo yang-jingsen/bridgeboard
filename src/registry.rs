@@ -107,6 +107,10 @@ impl Registry {
         Ok(())
     }
 
+    pub fn unregister(&mut self, id: &str) -> Option<RegistryEntry> {
+        self.entries.remove(id)
+    }
+
     pub fn load_configs(&self) -> Result<Vec<(RegistryEntry, BridgeConfig)>> {
         let mut out = Vec::new();
         for entry in self.entries.values() {

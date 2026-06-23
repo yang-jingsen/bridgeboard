@@ -222,6 +222,21 @@ pub fn up(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     up_inner(env, id, true, true)
 }
 
+pub fn up_from_peer(env: &BridgeEnv, peer_name: &str, id: &str) -> Result<Vec<String>> {
+    let export = peer::fetch_peer_export(&env.app, peer_name)
+        .map_err(|err| anyhow::anyhow!("query peer `{peer_name}` failed: {err}"))?;
+    let Some(service) = export.services.into_iter().find(|service| service.id == id) else {
+        bail!("service `{id}` was not found on peer `{peer_name}`");
+    };
+    let mut state = State::load(&env.paths.state_file)?;
+    let pid = start_peer_service_tunnel(env, &mut state, peer_name, &service)?;
+    state.save(&env.paths.state_file)?;
+    Ok(vec![format!(
+        "local tunnel {} -> {} pid {}",
+        service.port, service.owner_host, pid
+    )])
+}
+
 pub fn remote_up(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     let registry = Registry::load(&env.paths.registry_file)?;
     if let Some((_, cfg)) = registry.try_get_entry_config(id)? {

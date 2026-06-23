@@ -229,6 +229,7 @@ To allow the owner to open reverse tunnels to peers, add:
 
 ```bash
 bridgeboard register ./portal-bridge.yaml
+bridgeboard unregister image-review-portal
 bridgeboard handoff --id model-inspector --port 24050 --owner-host gpu-box
 bridgeboard ports
 bridgeboard ports --peers
@@ -236,6 +237,7 @@ bridgeboard list
 bridgeboard list --peers
 bridgeboard status image-review-portal --peers
 bridgeboard up image-review-portal
+bridgeboard up --peer gpu-box image-review-portal
 bridgeboard remote-up image-review-portal
 bridgeboard remote-down image-review-portal
 bridgeboard remote-restart image-review-portal
@@ -251,9 +253,11 @@ bridgeboard doctor
 bridgeboard watch
 ```
 
-`ports --peers` is the quickest operator view: it shows globally reserved ports, owner host, `managed` vs `external`, tunnel modes, and runtime status. `up <id>` can start a local tunnel from a peer registry entry even when the YAML file exists only on that peer, as long as the peer is configured, reachable by SSH, and the service enables `local_forward`. If you set `defaults.assume_local_forward_for_peers: true`, Bridgeboard treats peer records with empty `tunnel.modes` as locally tunnelable and displays them as `local(default)`.
+`ports --peers` is the quickest operator view: it shows globally reserved ports, owner host, `managed` vs `external`, tunnel modes, and runtime status. `up <id>` can start a local tunnel from a peer registry entry even when the YAML file exists only on that peer, as long as the peer is configured, reachable by SSH, and the service enables `local_forward`. If a local record has the same id and shadows the peer record, use `up --peer <peer> <id>` or `up --host <peer> <id>` to explicitly tunnel the peer export. If you set `defaults.assume_local_forward_for_peers: true`, Bridgeboard treats peer records with empty `tunnel.modes` as locally tunnelable and displays them as `local(default)`.
 
 `remote-up <id>`, `remote-down <id>`, and `remote-restart <id>` control the service on its owner host over SSH. Use these for remote records such as a `gpu-box` owned service visible from `workstation`. For local owner services they behave like `up`, `down`, and `restart`. Remote start/stop is explicit by design; `open <id>` does not silently start an owner service on another machine.
+
+`unregister <id>` removes a stale local registry entry without touching the service process. Add `--delete-config` to also remove the registered handoff or portal YAML file. This is useful when a machine has an old local record that shadows a peer service id.
 
 `rename <id> --title ...` changes the display title only. It does not change the stable service id, port, state keys, or tunnel keys. If the service is owned by a configured peer, Bridgeboard asks the owner host to apply the rename over SSH.
 

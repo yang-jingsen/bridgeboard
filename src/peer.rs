@@ -26,12 +26,7 @@ pub fn fetch_peer_exports(app: &AppConfig) -> Vec<(String, Result<RegistryExport
             .clone()
             .unwrap_or_else(|| "bridgeboard".into());
         let handle = thread::spawn(move || {
-            let result = peer_registry_output(&ssh_alias, &bridgeboard_bin).and_then(|out| {
-                if !out.status.success() {
-                    return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-                }
-                serde_json::from_slice::<RegistryExport>(&out.stdout).map_err(|e| e.to_string())
-            });
+            let result = query_peer_registry(&ssh_alias, &bridgeboard_bin);
             (name, result)
         });
         handles.push(handle);
@@ -44,6 +39,25 @@ pub fn fetch_peer_exports(app: &AppConfig) -> Vec<(String, Result<RegistryExport
                 .unwrap_or_else(|_| ("unknown".into(), Err("peer query thread panicked".into())))
         })
         .collect()
+}
+
+pub fn fetch_peer_export(app: &AppConfig, name: &str) -> Result<RegistryExport, String> {
+    let peer = app
+        .peers
+        .get(name)
+        .ok_or_else(|| format!("peer `{name}` is not configured"))?;
+    let ssh_alias = peer.ssh_alias.as_deref().unwrap_or(name);
+    let bridgeboard_bin = peer.bridgeboard_bin.as_deref().unwrap_or("bridgeboard");
+    query_peer_registry(ssh_alias, bridgeboard_bin)
+}
+
+fn query_peer_registry(ssh_alias: &str, bridgeboard_bin: &str) -> Result<RegistryExport, String> {
+    peer_registry_output(ssh_alias, bridgeboard_bin).and_then(|out| {
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        serde_json::from_slice::<RegistryExport>(&out.stdout).map_err(|e| e.to_string())
+    })
 }
 
 pub fn run_bridgeboard_command(
