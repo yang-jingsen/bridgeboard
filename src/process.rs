@@ -459,11 +459,31 @@ fn kill_external_processes(cfg: &BridgeConfig) -> Result<Vec<u32>> {
 }
 
 pub fn tunnel_key(id: &str, mode: TunnelMode, peer: &str) -> String {
+    let mode = tunnel_mode_key(mode);
+    format!("{id}:{mode}:{peer}")
+}
+
+fn tunnel_key_for_port(
+    id: &str,
+    mode: TunnelMode,
+    peer: &str,
+    local_port: u16,
+    remote_port: u16,
+) -> String {
+    if local_port == remote_port {
+        tunnel_key(id, mode, peer)
+    } else {
+        let mode = tunnel_mode_key(mode);
+        format!("{id}:{mode}:{peer}:{local_port}")
+    }
+}
+
+fn tunnel_mode_key(mode: TunnelMode) -> &'static str {
     let mode = match mode {
         TunnelMode::LocalForward => "local",
         TunnelMode::ReverseForward => "reverse",
     };
-    format!("{id}:{mode}:{peer}")
+    mode
 }
 
 pub fn start_tunnel(
@@ -476,6 +496,7 @@ pub fn start_tunnel(
     start_tunnel_spec(
         &cfg.id,
         cfg.port,
+        cfg.port,
         &cfg.tunnel.bind_host,
         mode,
         peer,
@@ -486,14 +507,15 @@ pub fn start_tunnel(
 
 pub fn start_tunnel_spec(
     id: &str,
-    port: u16,
+    remote_port: u16,
+    local_port: u16,
     bind_host: &str,
     mode: TunnelMode,
     peer: &str,
     ssh_alias: &str,
     state: &mut State,
 ) -> Result<u32> {
-    let key = tunnel_key(id, mode, peer);
+    let key = tunnel_key_for_port(id, mode, peer, local_port, remote_port);
     if let Some(existing) = state.tunnels.get(&key).and_then(|t| t.pid) {
         if pid_alive(existing) {
             return Ok(existing);
@@ -501,8 +523,8 @@ pub fn start_tunnel_spec(
     }
 
     let spec = match mode {
-        TunnelMode::LocalForward => format!("{bind_host}:{port}:127.0.0.1:{port}"),
-        TunnelMode::ReverseForward => format!("{bind_host}:{port}:127.0.0.1:{port}"),
+        TunnelMode::LocalForward => format!("{bind_host}:{local_port}:127.0.0.1:{remote_port}"),
+        TunnelMode::ReverseForward => format!("{bind_host}:{local_port}:127.0.0.1:{remote_port}"),
     };
     let flag = match mode {
         TunnelMode::LocalForward => "-L",
@@ -532,7 +554,7 @@ pub fn start_tunnel_spec(
         TunnelState {
             pid: Some(pid),
             mode: format!("{mode:?}"),
-            local_port: port,
+            local_port,
             peer: peer.to_string(),
             updated_at: Some(crate::time::now_iso()),
         },

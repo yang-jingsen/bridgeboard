@@ -154,26 +154,29 @@ fn port_rows_from_exports(
             } else {
                 export.machine_id.as_str()
             };
-            let local_tunnel_active = if is_remote_record && local_forward {
+            let active_local_port = if is_remote_record && local_forward {
+                let prefix = format!("{}:", service.id);
                 state
                     .tunnels
-                    .get(&process::tunnel_key(
-                        &service.id,
-                        TunnelMode::LocalForward,
-                        tunnel_owner,
-                    ))
-                    .and_then(|tunnel| tunnel.pid)
-                    .map(process::pid_alive)
-                    .unwrap_or(false)
+                    .iter()
+                    .filter(|(key, tunnel)| {
+                        key.starts_with(&prefix)
+                            && tunnel.peer == tunnel_owner
+                            && tunnel.pid.map(process::pid_alive).unwrap_or(false)
+                    })
+                    .find_map(|(_, tunnel)| Some(tunnel.local_port))
             } else {
-                false
+                None
             };
+            let local_tunnel_active = active_local_port.is_some();
             let direct_open = !is_remote_record || !local_forward || local_tunnel_active;
             let url = if !is_remote_record {
                 service
                     .open_url
                     .clone()
                     .unwrap_or_else(|| format!("http://127.0.0.1:{}/", service.port))
+            } else if let Some(local_port) = active_local_port {
+                format!("http://127.0.0.1:{local_port}/")
             } else if local_forward {
                 service
                     .local_url
@@ -222,18 +225,24 @@ pub fn up(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     up_inner(env, id, true, true)
 }
 
-pub fn up_from_peer(env: &BridgeEnv, peer_name: &str, id: &str) -> Result<Vec<String>> {
+pub fn up_from_peer(
+    env: &BridgeEnv,
+    peer_name: &str,
+    id: &str,
+    local_port: Option<u16>,
+) -> Result<Vec<String>> {
     let export = peer::fetch_peer_export(&env.app, peer_name)
         .map_err(|err| anyhow::anyhow!("query peer `{peer_name}` failed: {err}"))?;
     let Some(service) = export.services.into_iter().find(|service| service.id == id) else {
         bail!("service `{id}` was not found on peer `{peer_name}`");
     };
     let mut state = State::load(&env.paths.state_file)?;
-    let pid = start_peer_service_tunnel(env, &mut state, peer_name, &service)?;
+    let pid = start_peer_service_tunnel(env, &mut state, peer_name, &service, local_port)?;
     state.save(&env.paths.state_file)?;
+    let local_port = local_port.unwrap_or(service.port);
     Ok(vec![format!(
-        "local tunnel {} -> {} pid {}",
-        service.port, service.owner_host, pid
+        "local tunnel {} -> {}:{} pid {}",
+        local_port, service.owner_host, service.port, pid
     )])
 }
 
@@ -271,7 +280,7 @@ pub fn remote_up(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     };
     let mut messages = run_remote_up(env, owner, id)?;
     let mut state = State::load(&env.paths.state_file)?;
-    let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service)?;
+    let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
     state.save(&env.paths.state_file)?;
     messages.push(format!(
         "local tunnel {} -> {} pid {}",
@@ -338,7 +347,7 @@ pub fn remote_restart(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     };
     let mut messages = run_remote_restart(env, owner, id)?;
     let mut state = State::load(&env.paths.state_file)?;
-    let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service)?;
+    let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
     state.save(&env.paths.state_file)?;
     messages.push(format!(
         "local tunnel {} -> {} pid {}",
@@ -511,11 +520,11 @@ fn up_inner(
         let Some((peer_name, service)) = find_peer_service(env, id)? else {
             bail!("service `{id}` is not registered locally and was not found on configured peers");
         };
-        let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service)?;
+        let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
         state.save(&env.paths.state_file)?;
         messages.push(format!(
-            "local tunnel {} -> {} pid {}",
-            service.port, service.owner_host, pid
+            "local tunnel {} -> {}:{} pid {}",
+            service.port, service.owner_host, service.port, pid
         ));
         return Ok(messages);
     };
@@ -641,7 +650,7 @@ pub fn open(env: &BridgeEnv, id: &str) -> Result<String> {
         let mut local_tunnel = false;
         if local_forward_allowed(env, &service.tunnel_modes) {
             let mut state = State::load(&env.paths.state_file)?;
-            let _ = start_peer_service_tunnel(env, &mut state, &peer_name, &service)?;
+            let _ = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
             state.save(&env.paths.state_file)?;
             local_tunnel = true;
         }
@@ -917,6 +926,7 @@ fn start_peer_service_tunnel(
     state: &mut State,
     peer_name: &str,
     service: &ServiceExport,
+    local_port: Option<u16>,
 ) -> Result<u32> {
     ensure_local_forward_allowed(env, &service.id, &service.tunnel_modes)?;
     let owner = if env.app.peers.contains_key(&service.owner_host) {
@@ -933,6 +943,7 @@ fn start_peer_service_tunnel(
     process::start_tunnel_spec(
         &service.id,
         service.port,
+        local_port.unwrap_or(service.port),
         bind_host,
         TunnelMode::LocalForward,
         owner,

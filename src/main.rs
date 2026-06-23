@@ -92,6 +92,8 @@ struct UpArgs {
     id: String,
     #[arg(long, visible_alias = "host")]
     peer: Option<String>,
+    #[arg(long)]
+    local_port: Option<u16>,
 }
 
 #[derive(Args)]
@@ -277,8 +279,13 @@ fn dispatch(env: BridgeEnv, command: Command) -> Result<()> {
         Command::Status(args) => cmd_status(&env, args),
         Command::Ports(args) => cmd_ports(&env, args),
         Command::Up(args) => match args.peer {
-            Some(peer) => print_lines(core::up_from_peer(&env, &peer, &args.id)?),
-            None => print_lines(core::up(&env, &args.id)?),
+            Some(peer) => print_lines(core::up_from_peer(&env, &peer, &args.id, args.local_port)?),
+            None => {
+                if args.local_port.is_some() {
+                    bail!("--local-port requires --peer/--host");
+                }
+                print_lines(core::up(&env, &args.id)?)
+            }
         },
         Command::RemoteUp(args) => print_lines(core::remote_up(&env, &args.id)?),
         Command::RemoteDown(args) => print_lines(core::remote_down(&env, &args.id)?),
