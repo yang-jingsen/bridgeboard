@@ -69,11 +69,15 @@ fn peer_command_output(
     args: &[&str],
     timeout: Duration,
 ) -> Result<Output, String> {
-    let mut command = crate::command::quiet_command("ssh");
-    command
-        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
-        .arg(ssh_alias)
-        .arg(remote_command_line(bridgeboard_bin, args));
+    let command = ssh_command(vec![
+        "-T".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "ConnectTimeout=5".into(),
+        ssh_alias.into(),
+        remote_command_line(bridgeboard_bin, args),
+    ]);
     output_with_timeout(command, timeout)
 }
 
@@ -94,11 +98,15 @@ fn peer_command_output(
     args: &[&str],
     timeout: Duration,
 ) -> Result<Output, String> {
-    let mut command = crate::command::quiet_command("ssh");
-    command
-        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
-        .arg(ssh_alias)
-        .arg(remote_command_line(bridgeboard_bin, args));
+    let command = ssh_command(vec![
+        "-T".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "ConnectTimeout=5".into(),
+        ssh_alias.into(),
+        remote_command_line(bridgeboard_bin, args),
+    ]);
     output_with_timeout(command, timeout)
 }
 
@@ -123,12 +131,47 @@ fn peer_command_output_legacy(
     args: &[&str],
     timeout: Duration,
 ) -> Result<Output, String> {
-    let mut command = crate::command::quiet_command("ssh");
-    command
-        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
-        .arg(ssh_alias)
-        .arg(legacy_remote_command_line(bridgeboard_bin, args));
+    let command = ssh_command(vec![
+        "-T".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "ConnectTimeout=5".into(),
+        ssh_alias.into(),
+        legacy_remote_command_line(bridgeboard_bin, args),
+    ]);
     output_with_timeout(command, timeout)
+}
+
+#[cfg(windows)]
+fn ssh_command(args: Vec<String>) -> Command {
+    let mut command = crate::command::quiet_command("powershell");
+    let ps_args = args
+        .iter()
+        .map(|arg| powershell_single_quote(arg))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let script = format!("$ErrorActionPreference = 'Stop'; & ssh @({ps_args})");
+    command.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        &script,
+    ]);
+    command
+}
+
+#[cfg(not(windows))]
+fn ssh_command(args: Vec<String>) -> Command {
+    let mut command = crate::command::quiet_command("ssh");
+    command.args(args);
+    command
+}
+
+#[cfg(any(windows, test))]
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn remote_arg_quote(value: &str) -> String {
@@ -248,7 +291,8 @@ fn join_reader(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_remote_args, encode_remote_args, legacy_remote_command_line, remote_command_line,
+        decode_remote_args, encode_remote_args, legacy_remote_command_line,
+        powershell_single_quote, remote_command_line,
     };
 
     #[test]
@@ -293,6 +337,14 @@ mod tests {
         assert_eq!(
             legacy_remote_command_line("bridgeboard", &["registry", "export", "--json"]),
             "\"bridgeboard\" \"registry\" \"export\" \"--json\""
+        );
+    }
+
+    #[test]
+    fn powershell_single_quote_escapes_embedded_quotes() {
+        assert_eq!(
+            powershell_single_quote("host'; Remove-Item C:\\x"),
+            "'host''; Remove-Item C:\\x'"
         );
     }
 }
