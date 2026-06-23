@@ -53,11 +53,11 @@ pub fn run_bridgeboard_command(
 
 #[cfg(windows)]
 fn peer_registry_output(ssh_alias: &str, bridgeboard_bin: &str) -> Result<Output, String> {
-    peer_command_output(
+    peer_command_output_legacy(
         ssh_alias,
         bridgeboard_bin,
         &["registry", "export", "--json"],
-        Duration::from_secs(12),
+        Duration::from_secs(30),
     )
 }
 
@@ -70,7 +70,7 @@ fn peer_command_output(
 ) -> Result<Output, String> {
     let mut command = crate::command::quiet_command("ssh");
     command
-        .args(["-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
         .arg(ssh_alias)
         .arg(remote_command_line(bridgeboard_bin, args));
     output_with_timeout(command, timeout)
@@ -78,11 +78,11 @@ fn peer_command_output(
 
 #[cfg(not(windows))]
 fn peer_registry_output(ssh_alias: &str, bridgeboard_bin: &str) -> Result<Output, String> {
-    peer_command_output(
+    peer_command_output_legacy(
         ssh_alias,
         bridgeboard_bin,
         &["registry", "export", "--json"],
-        Duration::from_secs(12),
+        Duration::from_secs(30),
     )
 }
 
@@ -95,7 +95,7 @@ fn peer_command_output(
 ) -> Result<Output, String> {
     let mut command = crate::command::quiet_command("ssh");
     command
-        .args(["-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
         .arg(ssh_alias)
         .arg(remote_command_line(bridgeboard_bin, args));
     output_with_timeout(command, timeout)
@@ -107,6 +107,27 @@ fn remote_command_line(bridgeboard_bin: &str, args: &[&str]) -> String {
         remote_arg_quote(bridgeboard_bin),
         encode_remote_args(args)
     )
+}
+
+fn legacy_remote_command_line(bridgeboard_bin: &str, args: &[&str]) -> String {
+    let mut parts = Vec::with_capacity(args.len() + 1);
+    parts.push(remote_arg_quote(bridgeboard_bin));
+    parts.extend(args.iter().map(|arg| remote_arg_quote(arg)));
+    parts.join(" ")
+}
+
+fn peer_command_output_legacy(
+    ssh_alias: &str,
+    bridgeboard_bin: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Output, String> {
+    let mut command = crate::command::quiet_command("ssh");
+    command
+        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .arg(ssh_alias)
+        .arg(legacy_remote_command_line(bridgeboard_bin, args));
+    output_with_timeout(command, timeout)
 }
 
 fn remote_arg_quote(value: &str) -> String {
@@ -184,7 +205,9 @@ fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_remote_args, encode_remote_args, remote_command_line};
+    use super::{
+        decode_remote_args, encode_remote_args, legacy_remote_command_line, remote_command_line,
+    };
 
     #[test]
     fn remote_command_quotes_space_containing_args() {
@@ -220,6 +243,14 @@ mod tests {
         assert_eq!(
             decode_remote_args(&encode_remote_args(&args)).unwrap(),
             args
+        );
+    }
+
+    #[test]
+    fn legacy_remote_command_quotes_args() {
+        assert_eq!(
+            legacy_remote_command_line("bridgeboard", &["registry", "export", "--json"]),
+            "\"bridgeboard\" \"registry\" \"export\" \"--json\""
         );
     }
 }
