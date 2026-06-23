@@ -81,7 +81,7 @@ fn peer_registry_output(ssh_alias: &str, bridgeboard_bin: &str) -> Result<Output
     peer_command_output_legacy(
         ssh_alias,
         bridgeboard_bin,
-        &["registry", "export", "--json"],
+        &["registry", "export", "--json", "--no-runtime"],
         Duration::from_secs(30),
     )
 }
@@ -106,7 +106,7 @@ fn peer_registry_output(ssh_alias: &str, bridgeboard_bin: &str) -> Result<Output
     peer_command_output_legacy(
         ssh_alias,
         bridgeboard_bin,
-        &["registry", "export", "--json"],
+        &["registry", "export", "--json", "--no-runtime"],
         Duration::from_secs(30),
     )
 }

@@ -167,6 +167,8 @@ impl DetachStrategy {
 struct OutputArgs {
     #[arg(long)]
     json: bool,
+    #[arg(long)]
+    no_runtime: bool,
 }
 
 #[derive(Args)]
@@ -598,7 +600,7 @@ fn cmd_ports(env: &BridgeEnv, args: PortsArgs) -> Result<()> {
 
 fn cmd_registry_export(env: &BridgeEnv, args: OutputArgs) -> Result<()> {
     let registry = Registry::load(&env.paths.registry_file)?;
-    let export: RegistryExport = registry.export(&env.machine_id)?;
+    let export: RegistryExport = registry.export_with_runtime(&env.machine_id, !args.no_runtime)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&export)?);
     } else {

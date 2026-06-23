@@ -146,6 +146,14 @@ impl Registry {
     }
 
     pub fn export(&self, machine_id: &str) -> Result<RegistryExport> {
+        self.export_with_runtime(machine_id, true)
+    }
+
+    pub fn export_with_runtime(
+        &self,
+        machine_id: &str,
+        include_runtime: bool,
+    ) -> Result<RegistryExport> {
         let mut services = Vec::new();
         for entry in self.entries.values() {
             let cfg = load_bridge_config(&entry.config_path)?;
@@ -158,7 +166,11 @@ impl Registry {
                 tunnel_modes: cfg.tunnel.modes.clone(),
                 bind_host: cfg.tunnel.bind_host.clone(),
                 lifecycle: cfg.service.lifecycle.clone(),
-                runtime_status: runtime_status(&cfg, machine_id),
+                runtime_status: if include_runtime {
+                    runtime_status(&cfg, machine_id)
+                } else {
+                    None
+                },
                 recorded_pid: cfg.service.pid,
                 pid_source: cfg.service.pid_source.clone(),
                 pid_port: cfg.service.pid_port,

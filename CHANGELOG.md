@@ -1,5 +1,9 @@
 # Bridgeboard Changelog
 
+- 2026-06-24: Made peer registry fetches fast by default. `registry export`
+  now accepts `--no-runtime`, and SSH peer discovery uses that mode so the
+  dashboard can list remote services without waiting on every Windows
+  PID/port probe. Owner-local status commands still compute live runtime state.
 - 2026-06-24: Tightened managed `up` after Windows PID mismatch reports.
   After `start_service` returns, Bridgeboard now samples managed runtime state
   repeatedly and requires `running:<pid>` before it marks the service started
