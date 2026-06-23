@@ -6,6 +6,8 @@ use anyhow::{bail, Context, Result};
 use std::fs::{self, OpenOptions};
 use std::path::Path;
 use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn command(program: &str) -> Command {
     crate::command::quiet_command(program)
@@ -564,8 +566,12 @@ fn start_ssh_tunnel_process(args: &[String]) -> Result<u32> {
         .map(|arg| powershell_single_quote(arg))
         .collect::<Vec<_>>()
         .join(", ");
+    let stdout_path = tunnel_log_path("out");
+    let stderr_path = tunnel_log_path("err");
+    let stdout_arg = powershell_single_quote(&stdout_path);
+    let stderr_arg = powershell_single_quote(&stderr_path);
     let script = format!(
-        "$p = Start-Process -FilePath 'ssh' -ArgumentList @({ps_args}) -WindowStyle Hidden -PassThru; Start-Sleep -Milliseconds 1000; if ($p.HasExited) {{ exit $p.ExitCode }}; Write-Output $p.Id"
+        "$out = {stdout_arg}; $err = {stderr_arg}; Remove-Item $out,$err -ErrorAction SilentlyContinue; $p = Start-Process -FilePath 'ssh' -ArgumentList @({ps_args}) -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err -PassThru; Start-Sleep -Milliseconds 1000; if ($p.HasExited) {{ Write-Output '---stdout---'; Get-Content $out -ErrorAction SilentlyContinue; Write-Output '---stderr---'; Get-Content $err -ErrorAction SilentlyContinue; exit $p.ExitCode }}; Write-Output $p.Id"
     );
     let output = command("powershell")
         .args([
@@ -604,6 +610,21 @@ fn start_ssh_tunnel_process(args: &[String]) -> Result<u32> {
 #[cfg(windows)]
 fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(windows)]
+fn tunnel_log_path(kind: &str) -> String {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    std::env::temp_dir()
+        .join(format!(
+            "bridgeboard-ssh-tunnel-{}-{stamp}.{kind}.log",
+            std::process::id()
+        ))
+        .display()
+        .to_string()
 }
 
 pub fn stop_tunnels_for(id: &str, state: &mut State) -> Result<()> {
