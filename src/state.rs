@@ -39,6 +39,8 @@ pub struct TunnelState {
     pub mode: String,
     pub local_port: u16,
     pub peer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_name: Option<String>,
     pub updated_at: Option<String>,
 }
 

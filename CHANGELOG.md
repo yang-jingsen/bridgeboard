@@ -1,5 +1,15 @@
 # Bridgeboard Changelog
 
+- 2026-06-23: Fixed Windows remote SSH tunnels started through Bridgeboard.
+  Windows tunnel startup now uses a one-shot Scheduled Task so `ssh -N`
+  survives the OpenSSH session that invoked `bridgeboard up` remotely. Tunnel
+  state records the task name for later cleanup, and startup waits for the real
+  `ssh.exe` PID by listener port or matching command line. Validation:
+  `cargo fmt --check` passed; `cargo test` passed with 11 tests;
+  `cargo check --bins` passed; Windows `cargo build --release --bins` passed on
+  EVA-02; `bridgeboard up --peer tethys --local-port 24660 cutex-agent-bus`
+  kept `127.0.0.1:24660` listening after the SSH session exited and returned
+  HTTP 200.
 - 2026-06-04: Added an app-launcher dashboard mode. The dashboard now opens on
   an `Apps` panel for recorded web apps, with `Services` and `Ports` kept as
   operator views. API rows include `direct_open`, allowing already-running

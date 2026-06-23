@@ -7,7 +7,9 @@ use std::fs::{self, OpenOptions};
 use std::path::Path;
 use std::process::{Command, Stdio};
 #[cfg(windows)]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+#[cfg(windows)]
+use std::time::{Duration, SystemTime};
 
 fn command(program: &str) -> Command {
     crate::command::quiet_command(program)
@@ -544,8 +546,8 @@ pub fn start_tunnel_spec(
         spec,
         ssh_alias.to_string(),
     ];
-    let pid =
-        start_ssh_tunnel_process(&args).with_context(|| format!("start ssh tunnel for {id}"))?;
+    let (pid, task_name) = start_ssh_tunnel_process(&args, id, mode, peer, local_port, remote_port)
+        .with_context(|| format!("start ssh tunnel for {id}"))?;
     state.tunnels.insert(
         key,
         TunnelState {
@@ -553,6 +555,7 @@ pub fn start_tunnel_spec(
             mode: format!("{mode:?}"),
             local_port,
             peer: peer.to_string(),
+            task_name,
             updated_at: Some(crate::time::now_iso()),
         },
     );
@@ -560,43 +563,57 @@ pub fn start_tunnel_spec(
 }
 
 #[cfg(windows)]
-fn start_ssh_tunnel_process(args: &[String]) -> Result<u32> {
-    let ps_args = args
-        .iter()
-        .map(|arg| powershell_single_quote(arg))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let stdout_path = tunnel_log_path("out");
-    let stderr_path = tunnel_log_path("err");
-    let stdout_arg = powershell_single_quote(&stdout_path);
-    let stderr_arg = powershell_single_quote(&stderr_path);
-    let script = format!(
-        "$out = {stdout_arg}; $err = {stderr_arg}; Remove-Item $out,$err -ErrorAction SilentlyContinue; $p = Start-Process -FilePath 'ssh' -ArgumentList @({ps_args}) -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err -PassThru; Start-Sleep -Milliseconds 1000; if ($p.HasExited) {{ Write-Output '---stdout---'; Get-Content $out -ErrorAction SilentlyContinue; Write-Output '---stderr---'; Get-Content $err -ErrorAction SilentlyContinue; exit $p.ExitCode }}; Write-Output $p.Id"
+fn start_ssh_tunnel_process(
+    args: &[String],
+    id: &str,
+    mode: TunnelMode,
+    peer: &str,
+    local_port: u16,
+    remote_port: u16,
+) -> Result<(u32, Option<String>)> {
+    let task_name = tunnel_task_name(id, mode, peer, local_port, remote_port);
+    let safe_name = safe_task_file_stem(&task_name);
+    let temp_dir = std::env::temp_dir();
+    let wrapper_path = temp_dir.join(format!("{safe_name}.cmd"));
+    let log_file = temp_dir.join(format!("{safe_name}.log"));
+    let start_command = format!(
+        "ssh {}",
+        args.iter()
+            .map(|arg| quote_cmd_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ")
     );
-    let output = command("powershell")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ])
-        .output()
-        .context("run PowerShell Start-Process for ssh tunnel")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
-        bail!("ssh tunnel process exited during startup: {detail}");
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find_map(|line| line.trim().parse::<u32>().ok())
-        .context("PowerShell did not report ssh tunnel PID")
+
+    end_windows_scheduled_task_quiet(&task_name);
+    delete_windows_scheduled_task_quiet(&task_name);
+    start_windows_scheduled_task(
+        &task_name,
+        &wrapper_path,
+        None,
+        &start_command,
+        Some(&log_file),
+    )?;
+
+    let pid = wait_for_tunnel_pid(args, mode, local_port, Duration::from_secs(5))?.with_context(
+        || {
+            format!(
+                "ssh tunnel did not become active; log: {}",
+                read_lossy(&log_file)
+            )
+        },
+    )?;
+    Ok((pid, Some(task_name)))
 }
 
 #[cfg(not(windows))]
-fn start_ssh_tunnel_process(args: &[String]) -> Result<u32> {
+fn start_ssh_tunnel_process(
+    args: &[String],
+    _id: &str,
+    _mode: TunnelMode,
+    _peer: &str,
+    _local_port: u16,
+    _remote_port: u16,
+) -> Result<(u32, Option<String>)> {
     let child = command("ssh")
         .args(args)
         .stdin(Stdio::null())
@@ -604,7 +621,7 @@ fn start_ssh_tunnel_process(args: &[String]) -> Result<u32> {
         .stderr(Stdio::null())
         .spawn()
         .context("spawn ssh tunnel")?;
-    Ok(child.id())
+    Ok((child.id(), None))
 }
 
 #[cfg(windows)]
@@ -613,18 +630,127 @@ fn powershell_single_quote(value: &str) -> String {
 }
 
 #[cfg(windows)]
-fn tunnel_log_path(kind: &str) -> String {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default();
-    std::env::temp_dir()
-        .join(format!(
-            "bridgeboard-ssh-tunnel-{}-{stamp}.{kind}.log",
-            std::process::id()
-        ))
-        .display()
-        .to_string()
+fn tunnel_task_name(
+    id: &str,
+    mode: TunnelMode,
+    peer: &str,
+    local_port: u16,
+    remote_port: u16,
+) -> String {
+    let raw = format!(
+        "BridgeboardTunnel-{id}-{}-{peer}-{local_port}-{remote_port}",
+        tunnel_mode_key(mode)
+    );
+    let safe = safe_task_file_stem(&raw);
+    if safe.len() <= 180 {
+        safe
+    } else {
+        format!(
+            "{}-{local_port}-{remote_port}",
+            safe.chars().take(150).collect::<String>()
+        )
+    }
+}
+
+#[cfg(windows)]
+fn safe_task_file_stem(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn quote_cmd_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-._=:/@".contains(c))
+    {
+        value.to_string()
+    } else {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_tunnel_pid(
+    args: &[String],
+    mode: TunnelMode,
+    local_port: u16,
+    timeout: Duration,
+) -> Result<Option<u32>> {
+    let deadline = SystemTime::now() + timeout;
+    loop {
+        if mode == TunnelMode::LocalForward {
+            if let Some(pid) = pid_listening_on_port(local_port)? {
+                return Ok(Some(pid));
+            }
+        }
+        if let Some(pid) = matching_ssh_tunnel_pid(args)? {
+            return Ok(Some(pid));
+        }
+        if SystemTime::now() >= deadline {
+            return Ok(None);
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(windows)]
+fn matching_ssh_tunnel_pid(args: &[String]) -> Result<Option<u32>> {
+    let needles = args
+        .iter()
+        .filter(|arg| arg.len() > 2 && *arg != "-N")
+        .map(|arg| powershell_single_quote(arg))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let script = format!(
+        "$needles = @({needles}); Get-CimInstance Win32_Process -Filter \"Name = 'ssh.exe'\" | Where-Object {{ $cmd = $_.CommandLine; $cmd -and (@($needles | Where-Object {{ $cmd -notlike \"*$($_)*\" }}).Count -eq 0) }} | Sort-Object CreationDate -Descending | Select-Object -First 1 -ExpandProperty ProcessId"
+    );
+    let output = command("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .context("query Windows ssh tunnel PID")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.trim().parse::<u32>().ok()))
+}
+
+#[cfg(windows)]
+fn read_lossy(path: &Path) -> String {
+    fs::read(path)
+        .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_string())
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn end_windows_scheduled_task_quiet(task_name: &str) {
+    let _ = command("schtasks")
+        .args(["/End", "/TN", task_name])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(windows)]
+fn delete_windows_scheduled_task_quiet(task_name: &str) {
+    let _ = command("schtasks")
+        .args(["/Delete", "/TN", task_name, "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 pub fn stop_tunnels_for(id: &str, state: &mut State) -> Result<()> {
@@ -636,6 +762,10 @@ pub fn stop_tunnels_for(id: &str, state: &mut State) -> Result<()> {
         .collect();
     for key in keys {
         if let Some(tunnel) = state.tunnels.remove(&key) {
+            if let Some(task_name) = tunnel.task_name.as_deref() {
+                let _ = end_windows_scheduled_task(task_name);
+                let _ = delete_windows_scheduled_task(task_name);
+            }
             if let Some(pid) = tunnel.pid {
                 if pid_alive(pid) {
                     kill_pid(pid)?;
