@@ -530,25 +530,20 @@ pub fn start_tunnel_spec(
         TunnelMode::LocalForward => "-L",
         TunnelMode::ReverseForward => "-R",
     };
-    let child = command("ssh")
-        .args([
-            "-o",
-            "ExitOnForwardFailure=yes",
-            "-o",
-            "ServerAliveInterval=30",
-            "-o",
-            "ServerAliveCountMax=2",
-            "-N",
-            flag,
-            &spec,
-            ssh_alias,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .with_context(|| format!("start ssh tunnel for {id}"))?;
-    let pid = child.id();
+    let args = vec![
+        "-o".to_string(),
+        "ExitOnForwardFailure=yes".to_string(),
+        "-o".to_string(),
+        "ServerAliveInterval=30".to_string(),
+        "-o".to_string(),
+        "ServerAliveCountMax=2".to_string(),
+        "-N".to_string(),
+        flag.to_string(),
+        spec,
+        ssh_alias.to_string(),
+    ];
+    let pid =
+        start_ssh_tunnel_process(&args).with_context(|| format!("start ssh tunnel for {id}"))?;
     state.tunnels.insert(
         key,
         TunnelState {
@@ -560,6 +555,55 @@ pub fn start_tunnel_spec(
         },
     );
     Ok(pid)
+}
+
+#[cfg(windows)]
+fn start_ssh_tunnel_process(args: &[String]) -> Result<u32> {
+    let ps_args = args
+        .iter()
+        .map(|arg| powershell_single_quote(arg))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let script = format!(
+        "$p = Start-Process -FilePath 'ssh' -ArgumentList @({ps_args}) -WindowStyle Hidden -PassThru; Start-Sleep -Milliseconds 1000; if ($p.HasExited) {{ exit $p.ExitCode }}; Write-Output $p.Id"
+    );
+    let output = command("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .output()
+        .context("run PowerShell Start-Process for ssh tunnel")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        bail!("ssh tunnel process exited during startup: {detail}");
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.trim().parse::<u32>().ok())
+        .context("PowerShell did not report ssh tunnel PID")
+}
+
+#[cfg(not(windows))]
+fn start_ssh_tunnel_process(args: &[String]) -> Result<u32> {
+    let child = command("ssh")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("spawn ssh tunnel")?;
+    Ok(child.id())
+}
+
+#[cfg(windows)]
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 pub fn stop_tunnels_for(id: &str, state: &mut State) -> Result<()> {
