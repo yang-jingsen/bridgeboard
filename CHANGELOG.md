@@ -1,5 +1,10 @@
 # Bridgeboard Changelog
 
+- 2026-06-24: Prevented accidental deployment of the legacy Windows tray under
+  the modern tray name. The root crate now exposes the fallback native Win32
+  tray as `bridgeboard-win32-tray`; the `bridgeboard-tray` binary name is
+  reserved for the Tauri tray/window shell built from `apps/bridgeboard-tauri`,
+  matching Linux and Windows desktop behavior.
 - 2026-06-24: Added response-body health expectations. Service configs can now
   set `service.health_expect.body_contains`, and `bridgeboard handoff` accepts
   repeatable `--health-contains <text>` checks. Health checks still require a

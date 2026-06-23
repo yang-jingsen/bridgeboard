@@ -8,6 +8,19 @@ license = "MIT"
 readme = "README.md"
 keywords = ["service", "ports", "ssh", "tray", "dashboard"]
 categories = ["command-line-utilities", "development-tools"]
+autobins = false
+
+[[bin]]
+name = "bridgeboard"
+path = "src/main.rs"
+
+[[bin]]
+name = "bridgeboard-ui"
+path = "src/bin/bridgeboard-ui.rs"
+
+[[bin]]
+name = "bridgeboard-win32-tray"
+path = "src/bin/bridgeboard-tray.rs"
 
 [dependencies]
 anyhow = "1.0.102"

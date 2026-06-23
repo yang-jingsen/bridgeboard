@@ -295,6 +295,10 @@ bridgeboard-tray.exe
 
 It owns the local dashboard server on `127.0.0.1:24000`, starts local `autostart` services, runs the lightweight supervisor loop, and opens a small native WebView control window instead of launching a browser or command console. The tray menu includes `Open Bridgeboard`, `Open Web Dashboard`, `Ports`, `Doctor`, and `Quit`. Left-clicking the tray icon opens Bridgeboard.
 
+Build `bridgeboard-tray` from `apps/bridgeboard-tauri`; the root crate's
+`bridgeboard-win32-tray` binary is a legacy Windows fallback and intentionally
+uses a different native Win32 implementation.
+
 The in-window dashboard is the main UI. Its default `Apps` view is a launcher panel for recorded web apps, while `Services` and `Ports` keep the denser operator views. It shows local and peer services, fixed port ownership, health/status, local/network URLs, logs/status commands, and service-level action buttons for `Start`, `Stop`, `Restart`, `Open`, and `Rename`. Owner/local/remote context is shown as badges; the primary action follows whether the service is running, not where it lives. Service rows support local star pinning and toolbar sort modes, with pinned services kept first. `Open` uses a quick backend URL-open path for running services whose displayed URL is already reachable, so the system browser opens without re-querying SSH peers; on-demand starts, remote owner starts, and missing SSH local forwards still go through Bridgeboard's managed action path. External service status prefers the current fixed-port listener over stale handoff PIDs, so Windows wrapper processes do not hide the real service state. It refreshes on startup, manual refresh, window focus/visibility return, and after actions; it does not poll peer machines every few seconds. Peer registry fetches are run in parallel so a slow SSH peer does not block all other peer results serially. The top toolbar also includes one `Copy <machine>` handoff prompt button for the local machine and each configured peer, such as `Copy workstation` and `Copy gpu-box`.
 
 Fallback tools remain available:

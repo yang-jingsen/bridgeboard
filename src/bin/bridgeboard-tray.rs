@@ -2,7 +2,7 @@
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("bridgeboard-tray.exe is a Windows tray entrypoint.");
+    eprintln!("bridgeboard-win32-tray.exe is a legacy Windows tray entrypoint.");
 }
 
 #[cfg(windows)]
