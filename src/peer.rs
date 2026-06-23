@@ -311,14 +311,12 @@ fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output
     })
 }
 
-#[cfg(not(windows))]
 fn read_stream(mut stream: impl Read) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
     stream.read_to_end(&mut output).map_err(|e| e.to_string())?;
     Ok(output)
 }
 
-#[cfg(not(windows))]
 fn join_reader(
     handle: thread::JoinHandle<Result<Vec<u8>, String>>,
     name: &str,
