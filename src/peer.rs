@@ -1,20 +1,10 @@
 use crate::config::AppConfig;
 use crate::registry::RegistryExport;
 use anyhow::Result;
-#[cfg(windows)]
-use std::fs::{self, File};
-#[cfg(not(windows))]
 use std::io::Read;
-#[cfg(windows)]
-use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-#[cfg(windows)]
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
-
-#[cfg(windows)]
-static CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn fetch_peer_exports(app: &AppConfig) -> Vec<(String, Result<RegistryExport, String>)> {
     let mut handles = Vec::new();
@@ -190,77 +180,6 @@ fn hex_value(byte: u8) -> Result<u8, String> {
     }
 }
 
-#[cfg(windows)]
-fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output, String> {
-    let stdout_path = capture_path("stdout");
-    let stderr_path = capture_path("stderr");
-    let stdout_file = File::create(&stdout_path).map_err(|e| e.to_string())?;
-    let stderr_file = File::create(&stderr_path).map_err(|e| e.to_string())?;
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout_file))
-        .stderr(Stdio::from(stderr_file))
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            break status;
-        }
-        if start.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            let stderr = read_capture(&stderr_path).unwrap_or_default();
-            cleanup_capture(&stdout_path);
-            cleanup_capture(&stderr_path);
-            let detail = String::from_utf8_lossy(&stderr);
-            let detail = detail.trim();
-            let suffix = if detail.is_empty() {
-                String::new()
-            } else {
-                format!(": {detail}")
-            };
-            return Err(format!(
-                "peer registry query timed out after {}s{}",
-                timeout.as_secs(),
-                suffix
-            ));
-        }
-        thread::sleep(Duration::from_millis(50));
-    };
-    let stdout = read_capture(&stdout_path)?;
-    let stderr = read_capture(&stderr_path)?;
-    cleanup_capture(&stdout_path);
-    cleanup_capture(&stderr_path);
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-#[cfg(windows)]
-fn capture_path(label: &str) -> PathBuf {
-    let count = CAPTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mut path = std::env::temp_dir();
-    path.push(format!(
-        "bridgeboard-peer-{}-{count}-{label}.tmp",
-        std::process::id()
-    ));
-    path
-}
-
-#[cfg(windows)]
-fn read_capture(path: &Path) -> Result<Vec<u8>, String> {
-    fs::read(path).map_err(|e| format!("failed to read {}: {e}", path.display()))
-}
-
-#[cfg(windows)]
-fn cleanup_capture(path: &Path) {
-    let _ = fs::remove_file(path);
-}
-
-#[cfg(not(windows))]
 fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output, String> {
     let mut child = command
         .stdin(Stdio::null())
