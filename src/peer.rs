@@ -71,7 +71,7 @@ fn peer_command_output(
 ) -> Result<Output, String> {
     let mut command = crate::command::quiet_command("ssh");
     command
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
         .arg(ssh_alias)
         .arg(remote_command_line(bridgeboard_bin, args));
     output_with_timeout(command, timeout)
@@ -96,7 +96,7 @@ fn peer_command_output(
 ) -> Result<Output, String> {
     let mut command = crate::command::quiet_command("ssh");
     command
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
         .arg(ssh_alias)
         .arg(remote_command_line(bridgeboard_bin, args));
     output_with_timeout(command, timeout)
@@ -125,7 +125,7 @@ fn peer_command_output_legacy(
 ) -> Result<Output, String> {
     let mut command = crate::command::quiet_command("ssh");
     command
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
         .arg(ssh_alias)
         .arg(legacy_remote_command_line(bridgeboard_bin, args));
     output_with_timeout(command, timeout)
