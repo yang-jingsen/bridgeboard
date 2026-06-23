@@ -1,5 +1,11 @@
 # Bridgeboard Changelog
 
+- 2026-06-24: Tightened managed `up` after Windows PID mismatch reports.
+  After `start_service` returns, Bridgeboard now samples managed runtime state
+  repeatedly and requires `running:<pid>` before it marks the service started
+  or opens tunnels. If the pid_file PID and fixed-port listener still disagree,
+  `up/open` fails with the explicit unstable status instead of reporting a
+  misleading successful start.
 - 2026-06-24: Made fixed-port listener detection set-based. Bridgeboard now
   reads every PID listening on a configured port instead of selecting an
   arbitrary first PID. Managed status reports `multi-listener:<pids>` when a

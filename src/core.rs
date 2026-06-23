@@ -830,6 +830,7 @@ fn start_owned_service(
 ) -> Result<()> {
     if cfg.service.mode == ServiceMode::Managed {
         let pid = process::start_service(cfg, state)?;
+        verify_managed_service_stable(cfg, pid, state)?;
         if mark_desired {
             set_desired(state, &cfg.id, DesiredState::Running);
         }
@@ -885,6 +886,30 @@ fn start_owned_service(
         }
     }
     Ok(())
+}
+
+fn verify_managed_service_stable(cfg: &BridgeConfig, pid: u32, state: &mut State) -> Result<()> {
+    std::thread::sleep(Duration::from_millis(250));
+    for attempt in 0..3 {
+        let status = process::managed_service_status(cfg);
+        if !managed_status_matches_pid(&status, pid) {
+            let entry = state.services.entry(cfg.id.clone()).or_default();
+            entry.last_status = Some(format!("unstable:{status}"));
+            entry.updated_at = Some(crate::time::now_iso());
+            bail!(
+                "service `{}` did not reach stable running state: expected running:{pid}, got {status}; resolve the stale pid/port owner before opening tunnels",
+                cfg.id
+            );
+        }
+        if attempt < 2 {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+    Ok(())
+}
+
+fn managed_status_matches_pid(status: &str, pid: u32) -> bool {
+    status == format!("running:{pid}")
 }
 
 fn is_local_managed_with_startup(
@@ -995,5 +1020,19 @@ mod tests {
             restart: RestartPolicy::OnFailure,
         };
         assert_eq!(lifecycle_label(&lifecycle), "autostart/on_failure");
+    }
+
+    #[test]
+    fn managed_status_pid_match_is_exact() {
+        assert!(managed_status_matches_pid("running:42", 42));
+        assert!(!managed_status_matches_pid(
+            "pid-mismatch:42;listener:7",
+            42
+        ));
+        assert!(!managed_status_matches_pid("running:7", 42));
+        assert!(!managed_status_matches_pid(
+            "multi-listener:7,42;pid_file:42",
+            42
+        ));
     }
 }
