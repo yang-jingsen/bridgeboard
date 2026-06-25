@@ -74,7 +74,7 @@ pub fn status_rows(
         if id.map(|wanted| wanted != cfg.id).unwrap_or(false) {
             continue;
         }
-        seen.insert(cfg.id.clone());
+        seen.insert((cfg.owner_host.clone(), cfg.port, cfg.id.clone()));
         rows.push(crate::status::row_for(&cfg, &env.machine_id, &state));
     }
     if include_peers {
@@ -88,7 +88,7 @@ pub fn status_rows(
                 if id.map(|wanted| wanted != service.id).unwrap_or(false) {
                     continue;
                 }
-                if !seen.insert(service.id.clone()) {
+                if !seen.insert((service.owner_host.clone(), service.port, service.id.clone())) {
                     continue;
                 }
                 rows.push(crate::status::row_for_export(
@@ -231,11 +231,17 @@ pub fn up_from_peer(
     id: &str,
     local_port: Option<u16>,
 ) -> Result<Vec<String>> {
-    let export = peer::fetch_peer_export(&env.app, peer_name)
-        .map_err(|err| anyhow::anyhow!("query peer `{peer_name}` failed: {err}"))?;
-    let Some(service) = export.services.into_iter().find(|service| service.id == id) else {
-        bail!("service `{id}` was not found on peer `{peer_name}`");
-    };
+    up_from_peer_target(env, peer_name, id, None, local_port)
+}
+
+pub fn up_from_peer_target(
+    env: &BridgeEnv,
+    peer_name: &str,
+    id: &str,
+    owner_host: Option<&str>,
+    local_port: Option<u16>,
+) -> Result<Vec<String>> {
+    let service = fetch_peer_service(env, peer_name, id, owner_host)?;
     let owner = peer_service_owner(env, peer_name, &service);
     let mut messages = run_remote_up(env, owner, id)?;
     let mut state = State::load(&env.paths.state_file)?;
@@ -243,6 +249,32 @@ pub fn up_from_peer(
         env,
         &mut state,
         peer_name,
+        &service,
+        local_port,
+        &mut messages,
+    )?;
+    state.save(&env.paths.state_file)?;
+    Ok(messages)
+}
+
+pub fn remote_up_target(
+    env: &BridgeEnv,
+    id: &str,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+    local_port: Option<u16>,
+) -> Result<Vec<String>> {
+    let Some((peer_name, service)) = find_peer_service_target(env, id, owner_host, source_machine)?
+    else {
+        bail!("service `{id}` was not found on the requested peer target");
+    };
+    let owner = peer_service_owner(env, &peer_name, &service);
+    let mut messages = run_remote_up(env, owner, id)?;
+    let mut state = State::load(&env.paths.state_file)?;
+    start_peer_service_tunnel_or_reuse_reverse(
+        env,
+        &mut state,
+        &peer_name,
         &service,
         local_port,
         &mut messages,
@@ -343,6 +375,100 @@ pub fn remote_restart(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     )?;
     state.save(&env.paths.state_file)?;
     Ok(messages)
+}
+
+pub fn remote_down_target(
+    env: &BridgeEnv,
+    id: &str,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+) -> Result<Vec<String>> {
+    let Some((peer_name, service)) = find_peer_service_target(env, id, owner_host, source_machine)?
+    else {
+        bail!("service `{id}` was not found on the requested peer target");
+    };
+    let owner = peer_service_owner(env, &peer_name, &service).to_string();
+    let mut messages = run_remote_down(env, &owner, id)?;
+    let mut state = State::load(&env.paths.state_file)?;
+    process::stop_tunnels_for_peer(id, &owner, &mut state)?;
+    state.save(&env.paths.state_file)?;
+    messages.push(format!("stopped local tunnels for {id} via {owner}"));
+    Ok(messages)
+}
+
+pub fn remote_restart_target(
+    env: &BridgeEnv,
+    id: &str,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+    local_port: Option<u16>,
+) -> Result<Vec<String>> {
+    let Some((peer_name, service)) = find_peer_service_target(env, id, owner_host, source_machine)?
+    else {
+        bail!("service `{id}` was not found on the requested peer target");
+    };
+    let owner = peer_service_owner(env, &peer_name, &service);
+    let mut messages = run_remote_restart(env, owner, id)?;
+    let mut state = State::load(&env.paths.state_file)?;
+    start_peer_service_tunnel_or_reuse_reverse(
+        env,
+        &mut state,
+        &peer_name,
+        &service,
+        local_port,
+        &mut messages,
+    )?;
+    state.save(&env.paths.state_file)?;
+    Ok(messages)
+}
+
+pub fn open_remote_target(
+    env: &BridgeEnv,
+    id: &str,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+    local_port: Option<u16>,
+) -> Result<String> {
+    let Some((peer_name, service)) = find_peer_service_target(env, id, owner_host, source_machine)?
+    else {
+        bail!("service `{id}` was not found on the requested peer target");
+    };
+    let local_forward = local_forward_allowed(env, &service.tunnel_modes);
+    if service.lifecycle.startup == StartupPolicy::OnDemand {
+        let owner = peer_service_owner(env, &peer_name, &service);
+        let _ = run_remote_up(env, owner, id)?;
+    }
+    if local_forward {
+        let mut state = State::load(&env.paths.state_file)?;
+        let mut messages = Vec::new();
+        start_peer_service_tunnel_or_reuse_reverse(
+            env,
+            &mut state,
+            &peer_name,
+            &service,
+            local_port,
+            &mut messages,
+        )?;
+        state.save(&env.paths.state_file)?;
+    }
+    let url = peer_open_url_with_local_port(&service, local_forward, local_port);
+    webbrowser::open(&url).with_context(|| format!("open {url}"))?;
+    Ok(url)
+}
+
+pub fn rename_title_target(
+    env: &BridgeEnv,
+    id: &str,
+    title: &str,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+) -> Result<Vec<String>> {
+    let Some((peer_name, service)) = find_peer_service_target(env, id, owner_host, source_machine)?
+    else {
+        bail!("service `{id}` was not found on the requested peer target");
+    };
+    let owner = peer_service_owner(env, &peer_name, &service);
+    run_remote_rename(env, owner, id, title)
 }
 
 pub fn rename_title(env: &BridgeEnv, id: &str, title: &str) -> Result<Vec<String>> {
@@ -652,7 +778,18 @@ pub fn open(env: &BridgeEnv, id: &str) -> Result<String> {
 }
 
 fn peer_open_url(service: &ServiceExport, local_tunnel: bool) -> String {
+    peer_open_url_with_local_port(service, local_tunnel, None)
+}
+
+fn peer_open_url_with_local_port(
+    service: &ServiceExport,
+    local_tunnel: bool,
+    local_port: Option<u16>,
+) -> String {
     if local_tunnel {
+        if let Some(port) = local_port {
+            return format!("http://127.0.0.1:{port}/");
+        }
         return service
             .local_url
             .clone()
@@ -937,6 +1074,22 @@ fn set_desired(state: &mut State, id: &str, desired: DesiredState) {
 }
 
 fn find_peer_service(env: &BridgeEnv, id: &str) -> Result<Option<(String, ServiceExport)>> {
+    find_peer_service_target(env, id, None, None)
+}
+
+fn find_peer_service_target(
+    env: &BridgeEnv,
+    id: &str,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+) -> Result<Option<(String, ServiceExport)>> {
+    if let Some(peer_name) = source_machine {
+        if peer_name == env.machine_id {
+            return Ok(None);
+        }
+        let service = fetch_peer_service(env, peer_name, id, owner_host)?;
+        return Ok(Some((peer_name.to_string(), service)));
+    }
     let peer_results = peer::fetch_peer_exports(&env.app);
     peer::print_peer_warnings(&peer_results);
     for (peer_name, result) in peer_results {
@@ -944,12 +1097,40 @@ fn find_peer_service(env: &BridgeEnv, id: &str) -> Result<Option<(String, Servic
             continue;
         };
         for service in export.services {
-            if service.id == id {
+            if service_matches_target(&service, id, owner_host) {
                 return Ok(Some((peer_name, service)));
             }
         }
     }
     Ok(None)
+}
+
+fn fetch_peer_service(
+    env: &BridgeEnv,
+    peer_name: &str,
+    id: &str,
+    owner_host: Option<&str>,
+) -> Result<ServiceExport> {
+    let export = peer::fetch_peer_export(&env.app, peer_name)
+        .map_err(|err| anyhow::anyhow!("query peer `{peer_name}` failed: {err}"))?;
+    export
+        .services
+        .into_iter()
+        .find(|service| service_matches_target(service, id, owner_host))
+        .with_context(|| {
+            if let Some(owner) = owner_host {
+                format!("service `{id}` owned by `{owner}` was not found on peer `{peer_name}`")
+            } else {
+                format!("service `{id}` was not found on peer `{peer_name}`")
+            }
+        })
+}
+
+fn service_matches_target(service: &ServiceExport, id: &str, owner_host: Option<&str>) -> bool {
+    service.id == id
+        && owner_host
+            .map(|owner| service.owner_host == owner)
+            .unwrap_or(true)
 }
 
 fn peer_service_owner<'a>(

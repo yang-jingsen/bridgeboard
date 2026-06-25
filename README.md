@@ -8,8 +8,8 @@ Bridgeboard is a low-resource port ledger, service recorder, and optional SSH tu
 - **peer**: another machine reachable by SSH, for example `gpu-box`.
 - **portal config**: a project-owned `portal-bridge.yaml` file.
 - **registry**: Bridgeboard's local list of known portal configs.
-- **port ledger**: the global list of reserved 24xxx ports, including services that are not bridged.
-- **mirror port rule**: the same service id owns the same 24xxx port on every peer.
+- **port ledger**: the owner-scoped list of reserved 24xxx ports, including services that are not bridged.
+- **owner-local port rule**: one owner host cannot assign the same 24xxx port to different services. Different owner hosts may each use the same port for their own local service.
 
 ## Port Plan
 
@@ -22,9 +22,9 @@ Run `bridgeboard port-plan` to print the policy.
 - `24700-24899`: ad hoc temporary tunnels.
 - `24900-24999`: diagnostics/manual override/emergency.
 
-If `gpu-box` owns `image-review-portal` on `24001`, then `workstation:24001` is reserved for the tunnel entry to that same service. Do not assign `workstation:24001` to a different local app.
+If `gpu-box` owns `image-review-portal` on `24001`, Bridgeboard will try to open the SSH local forward on `workstation:24001` by default. `workstation` may also own its own service on `24001`; in that case open the peer service with an explicit alternate tunnel port such as `--local-port 24710`.
 
-A service can be **owner-only** and still reserve its port globally. In that case use `tunnel.modes: []` or `bridgeboard handoff --no-tunnel`. Otherwise Bridgeboard's handoff path defaults to SSH `local_forward`, so a service owned by `gpu-box` on `24201` can be opened from `workstation` through `127.0.0.1:24201` without exposing the service on a shared network or VPN. If `defaults.assume_local_forward_for_peers: true` is set locally, even peer records that forgot to declare `local_forward` can still be opened through SSH.
+A service can be **owner-only** and reserve its owner-local port without enabling peer access. In that case use `tunnel.modes: []` or `bridgeboard handoff --no-tunnel`. Otherwise Bridgeboard's handoff path defaults to SSH `local_forward`, so a service owned by `gpu-box` on `24201` can be opened from `workstation` through `127.0.0.1:24201` without exposing the service on a shared network or VPN. If `defaults.assume_local_forward_for_peers: true` is set locally, even peer records that forgot to declare `local_forward` can still be opened through SSH.
 
 ## Build
 
@@ -258,7 +258,7 @@ bridgeboard doctor
 bridgeboard watch
 ```
 
-`ports --peers` is the quickest operator view: it shows globally reserved ports, owner host, `managed` vs `external`, tunnel modes, and runtime status. `up <id>` can start a local tunnel from a peer registry entry even when the YAML file exists only on that peer, as long as the peer is configured, reachable by SSH, and the service enables `local_forward`. If a local record has the same id and shadows the peer record, use `up --peer <peer> <id>` or `up --host <peer> <id>` to explicitly tunnel the peer export. Add `--local-port <port>` when the peer's fixed service port is already occupied locally; Bridgeboard still forwards to the owner's service port, but listens on the requested local port. If you set `defaults.assume_local_forward_for_peers: true`, Bridgeboard treats peer records with empty `tunnel.modes` as locally tunnelable and displays them as `local(default)`.
+`ports --peers` is the quickest operator view: it shows owner-scoped reserved ports, owner host, source machine, `managed` vs `external`, tunnel modes, and runtime status. `up <id>` can start a local tunnel from a peer registry entry even when the YAML file exists only on that peer, as long as the peer is configured, reachable by SSH, and the service enables `local_forward`. If a local record has the same id and shadows the peer record, use `up --peer <peer> <id>` or `up --host <peer> <id>` to explicitly tunnel the peer export. By default the local listener uses the owner's fixed service port. Add `--local-port <port>` only when that port is already occupied locally or you intentionally want a distinct local tunnel port; Bridgeboard still forwards to the owner's service port. If you set `defaults.assume_local_forward_for_peers: true`, Bridgeboard treats peer records with empty `tunnel.modes` as locally tunnelable and displays them as `local(default)`.
 
 `remote-up <id>`, `remote-down <id>`, and `remote-restart <id>` control the service on its owner host over SSH. Use these for remote records such as a `gpu-box` owned service visible from `workstation`. For local owner services they behave like `up`, `down`, and `restart`. Remote start/stop is explicit by design; `open <id>` does not silently start an owner service on another machine.
 

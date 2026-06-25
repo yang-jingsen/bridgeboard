@@ -33,7 +33,7 @@ Make agent/service handoff reliable enough for Windows and Linux service deploym
 
 ## Branch / Checkpoint Strategy
 
-This folder is not currently a Git repository, so checkpoints are disk files plus validation logs. Keep stages behavior-preserving unless explicitly changing handoff semantics. Do not touch live project services while developing handoff changes unless separately requested.
+This folder is a Git repository. Keep checkpoints as small commits with validation logs in `CHANGELOG.md`. Preserve behavior unless explicitly changing handoff semantics. Do not touch live project services while developing handoff changes unless separately requested.
 
 ## Completed Stage 1 Plan
 
@@ -192,3 +192,26 @@ Validation:
 - `cargo build --release --bins`
 - Windows `cargo build --release --bins`
 - Linux and Windows archive refresh
+
+## Current Stage 9 Federated Service Identity
+
+Goal: let multiple peer machines expose services with the same stable service id
+and owner-local port without dashboard or CLI actions targeting the wrong host.
+The service `port` remains the owner's real service port. A local SSH tunnel
+uses that same port by default; `--local-port` is only for local conflicts or
+when the operator intentionally wants a distinct local tunnel port.
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| Scope port conflict validation by `(owner_host, port)` | Completed | Different owners can each reserve the same owner-local port. |
+| De-duplicate peer rows by `(owner_host, port, id)` | Completed | Peer views no longer collapse same-id services from different owners. |
+| Route dashboard actions with owner/source context | Completed | Buttons target the selected row, not the first matching id. |
+| Stop only tunnels for the selected peer owner | Completed | Avoids deleting unrelated same-id tunnels. |
+| Validate refreshed source build | Completed | Full Rust checks pass locally. |
+| Deploy refreshed binaries | Pending | Replace local installs after the source checkpoint. |
+
+Validation:
+
+- `cargo fmt --check`
+- `cargo test`
+- `cargo check --bins`

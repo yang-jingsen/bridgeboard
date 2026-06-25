@@ -1087,3 +1087,26 @@ pub fn stop_tunnels_for(id: &str, state: &mut State) -> Result<()> {
     }
     Ok(())
 }
+
+pub fn stop_tunnels_for_peer(id: &str, peer: &str, state: &mut State) -> Result<()> {
+    let keys: Vec<String> = state
+        .tunnels
+        .iter()
+        .filter(|(key, tunnel)| key.starts_with(&format!("{id}:")) && tunnel.peer == peer)
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in keys {
+        if let Some(tunnel) = state.tunnels.remove(&key) {
+            if let Some(task_name) = tunnel.task_name.as_deref() {
+                let _ = end_windows_scheduled_task(task_name);
+                let _ = delete_windows_scheduled_task(task_name);
+            }
+            if let Some(pid) = tunnel.pid {
+                if pid_alive(pid) {
+                    kill_pid(pid)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}

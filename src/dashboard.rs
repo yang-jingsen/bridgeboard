@@ -247,7 +247,24 @@ fn handle_request(runtime: &DashboardRuntime, stream: &mut TcpStream, token: &st
             let id = query_value(&url, "id").context("missing id")?;
             let action = query_value(&url, "action").context("missing action")?;
             let title = query_value(&url, "title");
-            match run_action(&runtime.env, &id, &action, title.as_deref()) {
+            let owner_host =
+                query_value(&url, "owner_host").filter(|value| !value.trim().is_empty());
+            let source_machine =
+                query_value(&url, "source_machine").filter(|value| !value.trim().is_empty());
+            let local_port = query_value(&url, "local_port")
+                .as_deref()
+                .map(str::parse::<u16>)
+                .transpose()
+                .context("invalid local_port")?;
+            match run_action(
+                &runtime.env,
+                &id,
+                &action,
+                title.as_deref(),
+                owner_host.as_deref(),
+                source_machine.as_deref(),
+                local_port,
+            ) {
                 Ok(message) => respond_json(
                     stream,
                     &serde_json::to_string_pretty(&json!({
@@ -378,22 +395,65 @@ fn agent_prompt_entry(machine_id: &str, local: bool) -> serde_json::Value {
     })
 }
 
-fn run_action(env: &DashboardEnv, id: &str, action: &str, title: Option<&str>) -> Result<String> {
+fn run_action(
+    env: &DashboardEnv,
+    id: &str,
+    action: &str,
+    title: Option<&str>,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+    local_port: Option<u16>,
+) -> Result<String> {
+    let peer_source_target = source_machine
+        .map(|source| source != env.machine_id)
+        .unwrap_or(false);
     if action == "open" {
-        let url = core::open(env, id)?;
+        let url = if peer_source_target {
+            core::open_remote_target(env, id, owner_host, source_machine, local_port)?
+        } else {
+            core::open(env, id)?
+        };
         return Ok(format!("opened {url}"));
     }
     if action == "rename" {
         let title = title.context("missing title")?;
-        let lines = core::rename_title(env, id, title)?;
+        let lines = if peer_source_target {
+            core::rename_title_target(env, id, title, owner_host, source_machine)?
+        } else {
+            core::rename_title(env, id, title)?
+        };
         return Ok(lines.join("\n"));
     }
 
     let lines = match action {
-        "up" => core::up(env, id)?,
-        "remote-up" => core::remote_up(env, id)?,
-        "remote-down" => core::remote_down(env, id)?,
-        "remote-restart" => core::remote_restart(env, id)?,
+        "up" => {
+            if peer_source_target {
+                core::remote_up_target(env, id, owner_host, source_machine, local_port)?
+            } else {
+                core::up(env, id)?
+            }
+        }
+        "remote-up" => {
+            if peer_source_target {
+                core::remote_up_target(env, id, owner_host, source_machine, local_port)?
+            } else {
+                core::remote_up(env, id)?
+            }
+        }
+        "remote-down" => {
+            if peer_source_target {
+                core::remote_down_target(env, id, owner_host, source_machine)?
+            } else {
+                core::remote_down(env, id)?
+            }
+        }
+        "remote-restart" => {
+            if peer_source_target {
+                core::remote_restart_target(env, id, owner_host, source_machine, local_port)?
+            } else {
+                core::remote_restart(env, id)?
+            }
+        }
         "down" | "stop" => core::down(env, id)?,
         "restart" => core::restart(env, id)?,
         other => bail!("unsupported action `{other}`"),
@@ -902,7 +962,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     }
 
     function comparePinned(a, b) {
-      return Number(pinnedIds.has(b.id)) - Number(pinnedIds.has(a.id));
+      return Number(pinnedIds.has(rowKey(b))) - Number(pinnedIds.has(rowKey(a)));
     }
 
     function compareByMode(a, b) {
@@ -940,13 +1000,28 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       localStorage.setItem(pinnedKey, JSON.stringify([...pinnedIds]));
     }
 
-    function togglePin(id) {
-      if (pinnedIds.has(id)) {
-        pinnedIds.delete(id);
-        showToast('Unpinned ' + id);
+    function rowKey(row) {
+      return [row.source_machine || '', row.owner_host || '', row.id || '', String(row.port || '')].join('|');
+    }
+
+    function rowByKey(key) {
+      return currentRows.find(candidate => rowKey(candidate) === key);
+    }
+
+    function rowActionExtra(row) {
+      return {
+        owner_host: row.owner_host || '',
+        source_machine: row.source_machine || '',
+      };
+    }
+
+    function togglePin(key) {
+      if (pinnedIds.has(key)) {
+        pinnedIds.delete(key);
+        showToast('Unpinned');
       } else {
-        pinnedIds.add(id);
-        showToast('Pinned ' + id);
+        pinnedIds.add(key);
+        showToast('Pinned');
       }
       savePinnedIds();
       render();
@@ -959,24 +1034,25 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         return;
       }
       target.innerHTML = `<div class="app-grid">${rows.map(row => {
+        const key = rowKey(row);
         const remote = isRemote(row);
         const state = serviceState(row.runtime_status);
-        const pinned = pinnedIds.has(row.id);
+        const pinned = pinnedIds.has(key);
         const primary = appPrimary(row);
         const secondary = appSecondary(row);
-        const busy = busyKey === row.id + ':' + primary.action;
-        const secondaryBusy = busyKey === row.id + ':' + secondary.action;
+        const busy = busyKey === key + ':' + primary.action;
+        const secondaryBusy = busyKey === key + ':' + secondary.action;
         const restartAction = remote ? 'remote-restart' : 'restart';
-        const restartBusy = busyKey === row.id + ':' + restartAction;
+        const restartBusy = busyKey === key + ':' + restartAction;
         return `
           <article class="app-card">
             <div class="app-head">
-              <button class="app-icon" onclick="runAppPrimary('${escapeAttr(row.id)}')" title="Open ${escapeAttr(row.title || row.id)}">${escapeHtml(appInitials(row))}</button>
+              <button class="app-icon" onclick="runAppPrimary('${escapeAttr(key)}')" title="Open ${escapeAttr(row.title || row.id)}">${escapeHtml(appInitials(row))}</button>
               <div class="app-name">
                 <strong>${escapeHtml(row.title || row.id)}</strong>
                 <span>${escapeHtml(appSubtitle(row))}</span>
               </div>
-              <button class="pin-button ${pinned ? 'active' : ''}" title="${pinned ? 'Unpin app' : 'Pin app'}" onclick="togglePin('${escapeAttr(row.id)}')">${pinned ? '★' : '☆'}</button>
+              <button class="pin-button ${pinned ? 'active' : ''}" title="${pinned ? 'Unpin app' : 'Pin app'}" onclick="togglePin('${escapeAttr(key)}')">${pinned ? '★' : '☆'}</button>
             </div>
             <div class="app-body">
               <div class="chips">
@@ -988,9 +1064,9 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
               <div class="app-url">${escapeHtml(row.url || '')}</div>
             </div>
             <div class="app-actions">
-              <button class="${primary.className} primary-action wide" ${busy ? 'disabled' : ''} onclick="runAppPrimary('${escapeAttr(row.id)}')">${busy ? 'Working' : primary.label}</button>
-              <button class="${secondary.className}" ${secondaryBusy ? 'disabled' : ''} onclick="runAppSecondary('${escapeAttr(row.id)}')">${secondaryBusy ? 'Working' : secondary.label}</button>
-              <button ${restartBusy ? 'disabled' : ''} onclick="runAction('${escapeAttr(row.id)}', '${restartAction}')">${restartBusy ? 'Working' : 'Restart'}</button>
+              <button class="${primary.className} primary-action wide" ${busy ? 'disabled' : ''} onclick="runAppPrimary('${escapeAttr(key)}')">${busy ? 'Working' : primary.label}</button>
+              <button class="${secondary.className}" ${secondaryBusy ? 'disabled' : ''} onclick="runAppSecondary('${escapeAttr(key)}')">${secondaryBusy ? 'Working' : secondary.label}</button>
+              <button ${restartBusy ? 'disabled' : ''} onclick="runActionByKey('${escapeAttr(key)}', '${restartAction}')">${restartBusy ? 'Working' : 'Restart'}</button>
             </div>
           </article>`;
       }).join('')}</div>`;
@@ -1011,27 +1087,27 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       return { action: 'open', label: 'Open', className: 'secondary' };
     }
 
-    function runAppPrimary(id) {
-      const row = currentRows.find(candidate => candidate.id === id);
+    function runAppPrimary(key) {
+      const row = rowByKey(key);
       if (!row) return;
       const primary = appPrimary(row);
       if (primary.action === 'open') {
-        openService(id);
+        openServiceByKey(key);
       } else if (primary.action === 'remote-up-open') {
-        runActionThenOpen(id, 'remote-up');
+        runActionThenOpenByKey(key, 'remote-up');
       } else {
-        runAction(id, primary.action);
+        runActionByKey(key, primary.action);
       }
     }
 
-    function runAppSecondary(id) {
-      const row = currentRows.find(candidate => candidate.id === id);
+    function runAppSecondary(key) {
+      const row = rowByKey(key);
       if (!row) return;
       const secondary = appSecondary(row);
       if (secondary.action === 'open') {
-        openService(id);
+        openServiceByKey(key);
       } else {
-        runAction(id, secondary.action);
+        runActionByKey(key, secondary.action);
       }
     }
 
@@ -1057,6 +1133,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         return;
       }
       target.innerHTML = `<div class="service-list">${rows.map(row => {
+        const key = rowKey(row);
         const remote = isRemote(row);
         const state = serviceState(row.runtime_status);
         const running = state.key === 'running';
@@ -1064,22 +1141,22 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         const restartAction = remote ? 'remote-restart' : 'restart';
         const primaryLabel = running ? 'Stop' : 'Start';
         const primaryClass = running ? 'warn' : 'primary';
-        const primaryBusy = busyKey === row.id + ':' + primaryAction;
-        const restartBusy = busyKey === row.id + ':' + restartAction;
+        const primaryBusy = busyKey === key + ':' + primaryAction;
+        const restartBusy = busyKey === key + ':' + restartAction;
         const scope = remote ? `owner ${row.owner_host}` : 'local owner';
         const access = remote ? (String(row.tunnel_modes || '').includes('local') ? 'ssh local' : 'network') : 'local';
-        const pinned = pinnedIds.has(row.id);
+        const pinned = pinnedIds.has(key);
         return `
           <article class="service-row">
             <div class="service-main">
               <div class="service-title">
-                <button class="pin-button ${pinned ? 'active' : ''}" title="${pinned ? 'Unpin service' : 'Pin service'}" onclick="togglePin('${escapeAttr(row.id)}')">${pinned ? '★' : '☆'}</button>
+                <button class="pin-button ${pinned ? 'active' : ''}" title="${pinned ? 'Unpin service' : 'Pin service'}" onclick="togglePin('${escapeAttr(key)}')">${pinned ? '★' : '☆'}</button>
                 <span class="state-badge ${escapeAttr(state.kind)}">${escapeHtml(state.label)}</span>
                 <span class="port-badge">:${escapeHtml(row.port)}</span>
                 <strong>${escapeHtml(row.title || row.id)}</strong>
               </div>
               <div class="service-meta">${escapeHtml(row.id)} - owner ${escapeHtml(row.owner_host)} - source ${escapeHtml(row.source_machine)}</div>
-              <div class="urlbox"><button class="linklike" onclick="openService('${escapeAttr(row.id)}')">${escapeHtml(row.url)}</button></div>
+              <div class="urlbox"><button class="linklike" onclick="openServiceByKey('${escapeAttr(key)}')">${escapeHtml(row.url)}</button></div>
             </div>
             <div class="chips">
               ${chip(scope, remote ? 'remote' : 'ok')}
@@ -1090,10 +1167,10 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
               ${row.desired_state && row.desired_state !== '-' ? chip('desired ' + row.desired_state, 'muted') : ''}
             </div>
             <div class="actions">
-              <button class="${primaryClass} primary-action" ${primaryBusy ? 'disabled' : ''} onclick="runAction('${escapeAttr(row.id)}', '${primaryAction}')">${primaryBusy ? 'Working' : primaryLabel}</button>
-              <button class="primary-action" ${restartBusy ? 'disabled' : ''} onclick="runAction('${escapeAttr(row.id)}', '${restartAction}')">${restartBusy ? 'Working' : 'Restart'}</button>
-              <button class="secondary" onclick="openService('${escapeAttr(row.id)}')">Open</button>
-              <button onclick="renameService('${escapeAttr(row.id)}')">Rename</button>
+              <button class="${primaryClass} primary-action" ${primaryBusy ? 'disabled' : ''} onclick="runActionByKey('${escapeAttr(key)}', '${primaryAction}')">${primaryBusy ? 'Working' : primaryLabel}</button>
+              <button class="primary-action" ${restartBusy ? 'disabled' : ''} onclick="runActionByKey('${escapeAttr(key)}', '${restartAction}')">${restartBusy ? 'Working' : 'Restart'}</button>
+              <button class="secondary" onclick="openServiceByKey('${escapeAttr(key)}')">Open</button>
+              <button onclick="renameService('${escapeAttr(key)}')">Rename</button>
             </div>
           </article>`;
         }).join('')}</div>`;
@@ -1105,7 +1182,9 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         target.innerHTML = '<div class="empty">No ports reserved.</div>';
         return;
       }
-      const cells = rows.map(row => `
+      const cells = rows.map(row => {
+        const key = rowKey(row);
+        return `
         <tr>
           <td>${escapeHtml(row.port)}</td>
           <td>${escapeHtml(row.id)}</td>
@@ -1117,8 +1196,9 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
           <td>${escapeHtml(row.desired_state)}</td>
           <td>${escapeHtml(row.tunnel_modes)}</td>
           <td>${escapeHtml(row.runtime_status)}</td>
-          <td><button class="linklike" onclick="openService('${escapeAttr(row.id)}')">${escapeHtml(row.url)}</button></td>
-        </tr>`).join('');
+          <td><button class="linklike" onclick="openServiceByKey('${escapeAttr(key)}')">${escapeHtml(row.url)}</button></td>
+        </tr>`;
+      }).join('');
       target.innerHTML = `<div class="ports-table"><table>
           <thead><tr><th>Port</th><th>ID</th><th>Owner</th><th>Source</th><th>Mode</th><th>Startup</th><th>Restart</th><th>Desired</th><th>Tunnel</th><th>Status</th><th>URL</th></tr></thead>
           <tbody>${cells}</tbody>
@@ -1212,13 +1292,14 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       }
     }
 
-    function openService(id) {
-      const row = currentRows.find(candidate => candidate.id === id);
+    function openServiceByKey(key) {
+      const row = rowByKey(key);
+      if (!row) return;
       if (canDirectOpen(row)) {
         runDirectOpen(row);
         return;
       }
-      runAction(id, 'open');
+      runActionForRow(row, 'open');
     }
 
     function canDirectOpen(row) {
@@ -1228,7 +1309,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
 
     async function runDirectOpen(row) {
       const status = document.getElementById('status');
-      busyKey = row.id + ':open';
+      busyKey = rowKey(row) + ':open';
       render();
       status.textContent = 'open ' + row.id + '...';
       try {
@@ -1246,9 +1327,10 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       }
     }
 
-    function renameService(id) {
-      const row = currentRows.find(candidate => candidate.id === id);
-      const currentTitle = row?.title || id;
+    function renameService(key) {
+      const row = rowByKey(key);
+      if (!row) return;
+      const currentTitle = row?.title || row.id;
       const nextTitle = window.prompt('Rename service', currentTitle);
       if (nextTitle === null) return;
       const title = nextTitle.trim();
@@ -1256,7 +1338,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         showToast('Rename failed: title must not be empty');
         return;
       }
-      runAction(id, 'rename', { title });
+      runActionForRow(row, 'rename', { title });
     }
 
     function escapeHtml(value) {
@@ -1267,13 +1349,20 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       return escapeHtml(value).replace(/`/g, '&#96;');
     }
 
-    async function runAction(id, action, extra = {}) {
+    function runActionByKey(key, action, extra = {}) {
+      const row = rowByKey(key);
+      if (!row) return;
+      runActionForRow(row, action, extra);
+    }
+
+    async function runActionForRow(row, action, extra = {}) {
       const status = document.getElementById('status');
-      busyKey = id + ':' + action;
+      const key = rowKey(row);
+      busyKey = key + ':' + action;
       render();
-      status.textContent = action + ' ' + id + '...';
+      status.textContent = action + ' ' + row.id + '...';
       try {
-        const params = new URLSearchParams({ id, action, ...extra });
+        const params = new URLSearchParams({ id: row.id, action, ...rowActionExtra(row), ...extra });
         const response = await fetch('/api/action?' + params.toString(), authOptions({ method: 'POST', cache: 'no-store' }));
         const result = await response.json();
         showToast(result.message || 'done');
@@ -1288,19 +1377,26 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       }
     }
 
-    async function runActionThenOpen(id, action, extra = {}) {
+    function runActionThenOpenByKey(key, action, extra = {}) {
+      const row = rowByKey(key);
+      if (!row) return;
+      runActionThenOpenForRow(row, action, extra);
+    }
+
+    async function runActionThenOpenForRow(row, action, extra = {}) {
       const status = document.getElementById('status');
-      busyKey = id + ':' + action;
+      const key = rowKey(row);
+      busyKey = key + ':' + action;
       render();
-      status.textContent = action + ' ' + id + '...';
+      status.textContent = action + ' ' + row.id + '...';
       try {
-        const params = new URLSearchParams({ id, action, ...extra });
+        const params = new URLSearchParams({ id: row.id, action, ...rowActionExtra(row), ...extra });
         const response = await fetch('/api/action?' + params.toString(), authOptions({ method: 'POST', cache: 'no-store' }));
         const result = await response.json();
         showToast(result.message || 'done');
         if (!response.ok || !result.ok) throw new Error(result.message || 'failed');
         await loadPorts();
-        openService(id);
+        openServiceByKey(key);
       } catch (err) {
         status.textContent = 'Action failed: ' + err;
         showToast('Action failed: ' + err);

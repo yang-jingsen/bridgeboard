@@ -5,7 +5,14 @@
   can each expose their own service on the same owner-local port. Dashboard and
   `ports --peers` row de-duplication now uses `(owner_host, port, id)` instead
   of `(port, id)`, so `tethys:cutex-agent-bus:24260` and
-  `eva-02:cutex-agent-bus:24260` can both be listed.
+  `eva-02:cutex-agent-bus:24260` can both be listed. Dashboard row actions now
+  pass `owner_host` and `source_machine` to the backend, so open/start/stop/
+  restart/rename target the selected owner instead of the first matching id.
+  The README and `port-plan` wording now describe the owner-local port rule:
+  local forwards mirror the owner's service port by default, and `--local-port`
+  is only for local conflicts or intentionally distinct tunnel ports.
+  Validation: `cargo fmt --check` passed; `cargo test` passed with 15 tests;
+  `cargo check --bins` passed.
 - 2026-06-25: Fixed two dashboard regressions seen with tethys/eva-02 peer
   management. The dashboard API now logs peer port conflicts but still returns
   the available service rows, so one unrelated duplicate port no longer makes

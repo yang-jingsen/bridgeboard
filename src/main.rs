@@ -779,8 +779,11 @@ fn print_port_plan() {
     println!("  24700-24899  ad hoc temporary tunnels");
     println!("  24900-24999  diagnostics/manual override/emergency");
     println!();
-    println!("Mirror rule: the same service id owns the same 24xxx port on every peer.");
     println!(
-        "If gpu-box owns service x on 24001, workstation:24001 is reserved as its tunnel entry."
+        "Owner-local rule: one owner host cannot assign the same 24xxx port to different services."
     );
+    println!(
+        "Different owners may each use the same service port; local forwards mirror the owner port by default."
+    );
+    println!("Use --local-port only when the default local tunnel port is occupied.");
 }
