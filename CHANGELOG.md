@@ -1,5 +1,11 @@
 # Bridgeboard Changelog
 
+- 2026-06-26: Made peer service identity owner-aware for federation. Port
+  conflict validation is now scoped to `(owner_host, port)`, so different hosts
+  can each expose their own service on the same owner-local port. Dashboard and
+  `ports --peers` row de-duplication now uses `(owner_host, port, id)` instead
+  of `(port, id)`, so `tethys:cutex-agent-bus:24260` and
+  `eva-02:cutex-agent-bus:24260` can both be listed.
 - 2026-06-25: Fixed two dashboard regressions seen with tethys/eva-02 peer
   management. The dashboard API now logs peer port conflicts but still returns
   the available service rows, so one unrelated duplicate port no longer makes

@@ -213,19 +213,25 @@ fn runtime_status(cfg: &BridgeConfig, machine_id: &str) -> Option<String> {
 }
 
 pub fn validate_no_port_conflicts(exports: &[RegistryExport]) -> Result<()> {
-    let mut by_port: BTreeMap<u16, (String, String, String)> = BTreeMap::new();
-    let mut seen_same: BTreeSet<(u16, String)> = BTreeSet::new();
+    let mut by_owner_port: BTreeMap<(String, u16), (String, String, String)> = BTreeMap::new();
+    let mut seen_same: BTreeSet<(String, u16, String)> = BTreeSet::new();
     for export in exports {
         for svc in &export.services {
-            let key = (svc.port, svc.id.clone());
+            let owner = if svc.owner_host.trim().is_empty() {
+                export.machine_id.clone()
+            } else {
+                svc.owner_host.clone()
+            };
+            let key = (owner.clone(), svc.port, svc.id.clone());
             if !seen_same.insert(key) {
                 continue;
             }
-            match by_port.get(&svc.port) {
+            match by_owner_port.get(&(owner.clone(), svc.port)) {
                 Some((id, machine, path)) if id != &svc.id => {
                     bail!(
-                        "port {} conflict: `{}` on {} ({}) vs `{}` on {} ({})",
+                        "port {} conflict on owner `{}`: `{}` from {} ({}) vs `{}` from {} ({})",
                         svc.port,
+                        owner,
                         id,
                         machine,
                         path,
@@ -236,8 +242,8 @@ pub fn validate_no_port_conflicts(exports: &[RegistryExport]) -> Result<()> {
                 }
                 Some(_) => {}
                 None => {
-                    by_port.insert(
-                        svc.port,
+                    by_owner_port.insert(
+                        (owner, svc.port),
                         (
                             svc.id.clone(),
                             export.machine_id.clone(),
@@ -256,12 +262,16 @@ mod tests {
     use super::*;
 
     fn export(machine: &str, id: &str, port: u16) -> RegistryExport {
+        export_with_owner(machine, machine, id, port)
+    }
+
+    fn export_with_owner(machine: &str, owner: &str, id: &str, port: u16) -> RegistryExport {
         RegistryExport {
             machine_id: machine.into(),
             services: vec![ServiceExport {
                 id: id.into(),
                 title: id.into(),
-                owner_host: machine.into(),
+                owner_host: owner.into(),
                 port,
                 service_mode: ServiceMode::Managed,
                 tunnel_modes: vec![TunnelMode::LocalForward],
@@ -283,19 +293,28 @@ mod tests {
     }
 
     #[test]
-    fn same_port_same_id_is_allowed() {
+    fn same_owner_same_port_same_id_is_allowed() {
         validate_no_port_conflicts(&[
             export("workstation", "x", 24001),
-            export("gpu-box", "x", 24001),
+            export_with_owner("workstation-cache", "workstation", "x", 24001),
         ])
         .unwrap();
     }
 
     #[test]
-    fn same_port_different_id_is_rejected() {
+    fn same_port_across_different_owners_is_allowed() {
+        validate_no_port_conflicts(&[
+            export("workstation", "x", 24001),
+            export("gpu-box", "y", 24001),
+        ])
+        .unwrap();
+    }
+
+    #[test]
+    fn same_owner_same_port_different_id_is_rejected() {
         assert!(validate_no_port_conflicts(&[
             export("workstation", "x", 24001),
-            export("gpu-box", "y", 24001)
+            export_with_owner("workstation-cache", "workstation", "y", 24001)
         ])
         .is_err());
     }

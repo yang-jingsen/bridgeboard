@@ -129,7 +129,7 @@ pub(crate) fn port_rows_from_exports(
     let mut rows = Vec::new();
     for export in exports {
         for service in export.services {
-            if !seen.insert((service.port, service.id.clone())) {
+            if !seen.insert((service.owner_host.clone(), service.port, service.id.clone())) {
                 continue;
             }
             let desired = if export.machine_id == local_machine_id {
