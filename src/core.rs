@@ -236,14 +236,17 @@ pub fn up_from_peer(
     let Some(service) = export.services.into_iter().find(|service| service.id == id) else {
         bail!("service `{id}` was not found on peer `{peer_name}`");
     };
+    let owner = peer_service_owner(env, peer_name, &service);
+    let mut messages = run_remote_up(env, owner, id)?;
     let mut state = State::load(&env.paths.state_file)?;
     let pid = start_peer_service_tunnel(env, &mut state, peer_name, &service, local_port)?;
     state.save(&env.paths.state_file)?;
     let local_port = local_port.unwrap_or(service.port);
-    Ok(vec![format!(
+    messages.push(format!(
         "local tunnel {} -> {}:{} pid {}",
         local_port, service.owner_host, service.port, pid
-    )])
+    ));
+    Ok(messages)
 }
 
 pub fn remote_up(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
@@ -520,6 +523,8 @@ fn up_inner(
         let Some((peer_name, service)) = find_peer_service(env, id)? else {
             bail!("service `{id}` is not registered locally and was not found on configured peers");
         };
+        let owner = peer_service_owner(env, &peer_name, &service);
+        messages.extend(run_remote_up(env, owner, id)?);
         let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
         state.save(&env.paths.state_file)?;
         messages.push(format!(
@@ -551,6 +556,7 @@ fn up_inner(
             }
         }
     } else {
+        messages.extend(run_remote_up(env, &cfg.owner_host, id)?);
         ensure_local_forward_allowed(env, &cfg.id, &cfg.tunnel.modes)?;
         let ssh_alias = peer::ssh_alias_for(&env.app, &cfg.owner_host);
         let pid = process::start_tunnel(
@@ -647,6 +653,10 @@ pub fn open(env: &BridgeEnv, id: &str) -> Result<String> {
         }
         open_url(&cfg)
     } else if let Some((peer_name, service)) = find_peer_service(env, id)? {
+        if service.lifecycle.startup == StartupPolicy::OnDemand {
+            let owner = peer_service_owner(env, &peer_name, &service);
+            let _ = run_remote_up(env, owner, id)?;
+        }
         let mut local_tunnel = false;
         if local_forward_allowed(env, &service.tunnel_modes) {
             let mut state = State::load(&env.paths.state_file)?;
@@ -958,6 +968,18 @@ fn find_peer_service(env: &BridgeEnv, id: &str) -> Result<Option<(String, Servic
         }
     }
     Ok(None)
+}
+
+fn peer_service_owner<'a>(
+    env: &'a BridgeEnv,
+    peer_name: &'a str,
+    service: &'a ServiceExport,
+) -> &'a str {
+    if env.app.peers.contains_key(&service.owner_host) {
+        service.owner_host.as_str()
+    } else {
+        peer_name
+    }
 }
 
 fn start_peer_service_tunnel(

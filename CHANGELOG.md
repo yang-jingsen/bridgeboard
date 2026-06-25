@@ -6,6 +6,9 @@
   the whole peer view disappear. The Apps launcher now treats remote on-demand
   "Start & Open" as `remote-up` followed by open, instead of only creating a
   local forward for a service that has not been started on its owner host.
+  Plain CLI `up`/`open` for peer services now follows the same owner-start
+  behavior before opening local forwards, so agents do not need to know the
+  dashboard-only `remote-up` action.
 - 2026-06-25: Made the dashboard resilient to slow Windows PID probes and
   flaky SSH peer discovery. The web dashboard now keeps export snapshots in
   memory and on disk (`dashboard-cache.json`). `/api/ports` returns the last
