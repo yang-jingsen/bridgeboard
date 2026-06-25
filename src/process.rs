@@ -595,6 +595,31 @@ pub fn stop_service(cfg: &BridgeConfig, state: &mut State) -> Result<()> {
     Ok(())
 }
 
+pub fn reconcile_managed_listener_pid(
+    cfg: &BridgeConfig,
+    state: &mut State,
+) -> Result<Option<u32>> {
+    if cfg.service.mode != ServiceMode::Managed {
+        return Ok(None);
+    }
+    let listener_pids = service_listener_pids(cfg);
+    if listener_pids.len() != 1 {
+        return Ok(None);
+    }
+    let listener_pid = listener_pids[0];
+    let pid_path = service_pid_path(cfg).context("managed service pid_file is required")?;
+    if read_pid_file(&pid_path) == Some(listener_pid) {
+        return Ok(None);
+    }
+    fs::write(&pid_path, format!("{listener_pid}\n"))?;
+    let entry = state.services.entry(cfg.id.clone()).or_default();
+    entry.pid = Some(listener_pid);
+    entry.pid_source = None;
+    entry.pid_port = None;
+    entry.updated_at = Some(crate::time::now_iso());
+    Ok(Some(listener_pid))
+}
+
 fn wait_for_managed_listener(cfg: &BridgeConfig, child_pid: u32, log_path: &Path) -> Result<u32> {
     let timeout = Duration::from_secs(cfg.service.startup_timeout_sec.max(1));
     let deadline = Instant::now() + timeout;

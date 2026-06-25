@@ -880,6 +880,9 @@ fn start_owned_service(
         ) {
             Ok(status) => {
                 messages.push(format!("health: {status}"));
+                if let Some(pid) = process::reconcile_managed_listener_pid(cfg, state)? {
+                    messages.push(format!("pid reconciled to listener {pid}"));
+                }
                 let entry = state.services.entry(cfg.id.clone()).or_default();
                 entry.last_health = Some(status);
                 entry.last_status = Some("healthy".into());
