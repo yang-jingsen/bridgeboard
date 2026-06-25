@@ -852,20 +852,88 @@ fn start_ssh_tunnel_process(
 #[cfg(not(windows))]
 fn start_ssh_tunnel_process(
     args: &[String],
-    _id: &str,
-    _mode: TunnelMode,
+    id: &str,
+    mode: TunnelMode,
     _peer: &str,
-    _local_port: u16,
+    local_port: u16,
     _remote_port: u16,
 ) -> Result<(u32, Option<String>)> {
-    let child = command("ssh")
-        .args(args)
+    let mut bg_args = Vec::with_capacity(args.len() + 1);
+    bg_args.push("-f".to_string());
+    bg_args.extend(args.iter().cloned());
+    let output = command("ssh")
+        .args(&bg_args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .output()
         .context("spawn ssh tunnel")?;
-    Ok((child.id(), None))
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        bail!("ssh tunnel command failed: {detail}");
+    }
+    let pid = wait_for_unix_tunnel_pid(args, mode, local_port, Duration::from_secs(5))?
+        .with_context(|| format!("ssh tunnel for {id} did not become active"))?;
+    Ok((pid, None))
+}
+
+#[cfg(not(windows))]
+fn wait_for_unix_tunnel_pid(
+    args: &[String],
+    mode: TunnelMode,
+    local_port: u16,
+    timeout: Duration,
+) -> Result<Option<u32>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if mode == TunnelMode::LocalForward {
+            if let Some(pid) = pid_listening_on_port(local_port)? {
+                return Ok(Some(pid));
+            }
+            if tcp_port_open(local_port) {
+                if let Some(pid) = matching_ssh_tunnel_pid(args)? {
+                    return Ok(Some(pid));
+                }
+            }
+        } else if let Some(pid) = matching_ssh_tunnel_pid(args)? {
+            return Ok(Some(pid));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(not(windows))]
+fn matching_ssh_tunnel_pid(args: &[String]) -> Result<Option<u32>> {
+    let output = command("ps")
+        .args(["-eo", "pid=,args="])
+        .output()
+        .context("query ssh tunnel PID")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let needles = args
+        .iter()
+        .filter(|arg| arg.len() > 2 && *arg != "-N")
+        .collect::<Vec<_>>();
+    let mut matched = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let trimmed = line.trim_start();
+        let Some((pid_text, command_line)) = trimmed.split_once(char::is_whitespace) else {
+            continue;
+        };
+        if !command_line.contains("ssh") {
+            continue;
+        }
+        if needles.iter().all(|needle| command_line.contains(*needle)) {
+            if let Ok(pid) = pid_text.parse::<u32>() {
+                matched = Some(pid);
+            }
+        }
+    }
+    Ok(matched)
 }
 
 #[cfg(windows)]

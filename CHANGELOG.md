@@ -16,6 +16,9 @@
   instead of creating a duplicate same-port local-forward process that exits
   immediately, using a short loopback TCP readiness check so Linux can detect
   SSH reverse listeners even when PID ownership is not visible.
+  Unix local-forward tunnel startup now uses `ssh -f` with
+  `ExitOnForwardFailure` and waits for the listener PID before returning, so
+  CLI-launched forwards survive after the Bridgeboard command exits.
 - 2026-06-25: Made the dashboard resilient to slow Windows PID probes and
   flaky SSH peer discovery. The web dashboard now keeps export snapshots in
   memory and on disk (`dashboard-cache.json`). `/api/ports` returns the last
