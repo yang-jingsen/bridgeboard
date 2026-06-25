@@ -208,6 +208,7 @@ when the operator intentionally wants a distinct local tunnel port.
 | Route dashboard actions with owner/source context | Completed | Buttons target the selected row, not the first matching id. |
 | Stop only tunnels for the selected peer owner | Completed | Avoids deleting unrelated same-id tunnels. |
 | Make observation paths side-effect-free | Completed | Registration validation uses no-runtime exports; record-only external stop does not kill observed PIDs. |
+| Add local-port fallback for peer rows | Completed | Dashboard actions use stable fallback ports when the owner port is already local. |
 | Validate refreshed source build | Completed | Full Rust checks pass locally. |
 | Deploy refreshed binaries | Pending | Replace local installs after the source checkpoint. |
 

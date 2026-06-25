@@ -39,6 +39,7 @@ pub struct PortRow {
     pub runtime_status: String,
     pub url: String,
     pub direct_open: bool,
+    pub local_port: Option<u16>,
     pub network_url: Option<String>,
     pub pid_source: Option<String>,
     pub notes: Option<String>,
@@ -168,6 +169,14 @@ pub(crate) fn port_rows_from_exports(
             } else {
                 None
             };
+            let action_local_port = active_local_port.or_else(|| {
+                if is_remote_record && local_forward && local_port_needs_peer_fallback(service.port)
+                {
+                    peer_fallback_local_port(service.port)
+                } else {
+                    None
+                }
+            });
             let local_tunnel_active = active_local_port.is_some();
             let direct_open = !is_remote_record || !local_forward || local_tunnel_active;
             let url = if !is_remote_record {
@@ -175,7 +184,7 @@ pub(crate) fn port_rows_from_exports(
                     .open_url
                     .clone()
                     .unwrap_or_else(|| format!("http://127.0.0.1:{}/", service.port))
-            } else if let Some(local_port) = active_local_port {
+            } else if let Some(local_port) = action_local_port {
                 format!("http://127.0.0.1:{local_port}/")
             } else if local_forward {
                 service
@@ -211,6 +220,7 @@ pub(crate) fn port_rows_from_exports(
                     .unwrap_or_else(|| "remote-record".into()),
                 url,
                 direct_open,
+                local_port: action_local_port,
                 network_url: service.network_url,
                 pid_source: service.pid_source,
                 notes: service.notes,
@@ -219,6 +229,32 @@ pub(crate) fn port_rows_from_exports(
     }
     rows.sort_by(|a, b| a.port.cmp(&b.port).then_with(|| a.id.cmp(&b.id)));
     rows
+}
+
+fn local_port_needs_peer_fallback(port: u16) -> bool {
+    let Ok(Some(pid)) = process::pid_listening_on_port(port) else {
+        return false;
+    };
+    !process::describe_pid(pid)
+        .to_ascii_lowercase()
+        .contains("ssh")
+}
+
+fn peer_fallback_local_port(port: u16) -> Option<u16> {
+    if let Some(preferred) = preferred_peer_fallback_port(port) {
+        if !process::tcp_port_open(preferred) {
+            return Some(preferred);
+        }
+    }
+    (24700..=24899).find(|candidate| !process::tcp_port_open(*candidate))
+}
+
+fn preferred_peer_fallback_port(port: u16) -> Option<u16> {
+    let preferred = port.saturating_add(400);
+    if (24001..=24999).contains(&preferred) {
+        return Some(preferred);
+    }
+    None
 }
 
 pub fn up(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
@@ -1298,5 +1334,12 @@ mod tests {
             "multi-listener:7,42;pid_file:42",
             42
         ));
+    }
+
+    #[test]
+    fn preferred_peer_fallback_port_uses_stable_offset_inside_policy_range() {
+        assert_eq!(preferred_peer_fallback_port(24260), Some(24660));
+        assert_eq!(preferred_peer_fallback_port(24308), Some(24708));
+        assert_eq!(preferred_peer_fallback_port(24699), None);
     }
 }

@@ -16,8 +16,11 @@
   dashboard or peer-export output. Record-only external handoffs no longer kill
   the recorded PID/listener on `stop`; Bridgeboard only cleans external child
   processes when the record has an explicit `stop_command` or scheduled-task
-  ownership metadata.
-  Validation: `cargo fmt --check` passed; `cargo test` passed with 17 tests;
+  ownership metadata. Remote peer rows now carry an action `local_port`; when
+  the owner's fixed port is already held by a local non-SSH service, the
+  dashboard uses a stable fallback such as `24260 -> 24660` for that peer
+  tunnel instead of opening the wrong local service.
+  Validation: `cargo fmt --check` passed; `cargo test` passed with 18 tests;
   `cargo check --bins` passed.
 - 2026-06-25: Fixed two dashboard regressions seen with tethys/eva-02 peer
   management. The dashboard API now logs peer port conflicts but still returns

@@ -1009,10 +1009,12 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     }
 
     function rowActionExtra(row) {
-      return {
+      const extra = {
         owner_host: row.owner_host || '',
         source_machine: row.source_machine || '',
       };
+      if (row.local_port) extra.local_port = String(row.local_port);
+      return extra;
     }
 
     function togglePin(key) {
