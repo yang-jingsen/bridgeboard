@@ -692,7 +692,7 @@ fn validate_registry_ports(
     registry: &Registry,
     include_peers: bool,
 ) -> Result<()> {
-    let mut exports = vec![registry.export(&env.machine_id)?];
+    let mut exports = vec![registry.export_with_runtime(&env.machine_id, false)?];
     if include_peers {
         let peer_results = peer::fetch_peer_exports(&env.app);
         peer::print_peer_warnings(&peer_results);

@@ -22,6 +22,9 @@ pub fn pid_alive(pid: u32) -> bool {
         command("kill")
             .arg("-0")
             .arg(pid.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
@@ -531,7 +534,11 @@ pub fn stop_service(cfg: &BridgeConfig, state: &mut State) -> Result<()> {
                 stopped_by.push("task".to_string());
             }
         }
-        let killed = kill_external_processes(cfg)?;
+        let killed = if external_stop_may_kill_processes(cfg) {
+            kill_external_processes(cfg)?
+        } else {
+            Vec::new()
+        };
         if !killed.is_empty() {
             stopped_by.push(format!(
                 "killed-pid:{}",
@@ -599,6 +606,10 @@ pub fn stop_service(cfg: &BridgeConfig, state: &mut State) -> Result<()> {
         },
     );
     Ok(())
+}
+
+fn external_stop_may_kill_processes(cfg: &BridgeConfig) -> bool {
+    cfg.service.stop_command.is_some() || cfg.service.task_name.is_some()
 }
 
 pub fn reconcile_managed_listener_pid(
@@ -1109,4 +1120,61 @@ pub fn stop_tunnels_for_peer(id: &str, peer: &str, state: &mut State) -> Result<
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{HealthExpectConfig, LifecycleConfig, ServiceConfig, TunnelConfig};
+
+    fn external_cfg() -> BridgeConfig {
+        BridgeConfig {
+            schema: "portal-bridge.v1".into(),
+            id: "observed-service".into(),
+            title: "Observed Service".into(),
+            owner_host: "workstation".into(),
+            port: 24510,
+            service: ServiceConfig {
+                mode: ServiceMode::External,
+                lifecycle: LifecycleConfig::default(),
+                cwd: None,
+                command: Vec::new(),
+                start_command: None,
+                detach: None,
+                stop_command: None,
+                restart_command: None,
+                task_name: None,
+                pid_source: Some("port:24510".into()),
+                pid_port: Some(24510),
+                pid_file: None,
+                pid: Some(12345),
+                log_file: None,
+                health_url: None,
+                health_expect: HealthExpectConfig::default(),
+                startup_timeout_sec: 5,
+                notes: None,
+            },
+            tunnel: TunnelConfig::default(),
+            local_url: None,
+            network_url: None,
+            open_url: None,
+        }
+    }
+
+    #[test]
+    fn record_only_external_stop_does_not_kill_observed_pid() {
+        let cfg = external_cfg();
+        assert!(!external_stop_may_kill_processes(&cfg));
+    }
+
+    #[test]
+    fn controlled_external_stop_may_clean_child_processes() {
+        let mut cfg = external_cfg();
+        cfg.service.stop_command = Some("stop-observed-service".into());
+        assert!(external_stop_may_kill_processes(&cfg));
+
+        let mut cfg = external_cfg();
+        cfg.service.task_name = Some("Bridgeboard-observed-service".into());
+        assert!(external_stop_may_kill_processes(&cfg));
+    }
 }

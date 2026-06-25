@@ -207,6 +207,7 @@ when the operator intentionally wants a distinct local tunnel port.
 | De-duplicate peer rows by `(owner_host, port, id)` | Completed | Peer views no longer collapse same-id services from different owners. |
 | Route dashboard actions with owner/source context | Completed | Buttons target the selected row, not the first matching id. |
 | Stop only tunnels for the selected peer owner | Completed | Avoids deleting unrelated same-id tunnels. |
+| Make observation paths side-effect-free | Completed | Registration validation uses no-runtime exports; record-only external stop does not kill observed PIDs. |
 | Validate refreshed source build | Completed | Full Rust checks pass locally. |
 | Deploy refreshed binaries | Pending | Replace local installs after the source checkpoint. |
 

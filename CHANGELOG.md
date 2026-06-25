@@ -11,7 +11,13 @@
   The README and `port-plan` wording now describe the owner-local port rule:
   local forwards mirror the owner's service port by default, and `--local-port`
   is only for local conflicts or intentionally distinct tunnel ports.
-  Validation: `cargo fmt --check` passed; `cargo test` passed with 15 tests;
+  Registration-time port validation now uses no-runtime exports, and Unix PID
+  liveness probes silence `kill -0` stderr so stale PIDs do not pollute
+  dashboard or peer-export output. Record-only external handoffs no longer kill
+  the recorded PID/listener on `stop`; Bridgeboard only cleans external child
+  processes when the record has an explicit `stop_command` or scheduled-task
+  ownership metadata.
+  Validation: `cargo fmt --check` passed; `cargo test` passed with 17 tests;
   `cargo check --bins` passed.
 - 2026-06-25: Fixed two dashboard regressions seen with tethys/eva-02 peer
   management. The dashboard API now logs peer port conflicts but still returns
