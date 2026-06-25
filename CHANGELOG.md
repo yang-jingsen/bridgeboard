@@ -14,7 +14,8 @@
   wrapper PID is replaced by the real long-running process.
   Remote up/restart now reuses an already-listening reverse-forward port
   instead of creating a duplicate same-port local-forward process that exits
-  immediately.
+  immediately, using a short loopback TCP readiness check so Linux can detect
+  SSH reverse listeners even when PID ownership is not visible.
 - 2026-06-25: Made the dashboard resilient to slow Windows PID probes and
   flaky SSH peer discovery. The web dashboard now keeps export snapshots in
   memory and on disk (`dashboard-cache.json`). `/api/ports` returns the last

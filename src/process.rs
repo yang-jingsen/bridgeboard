@@ -4,6 +4,7 @@ use crate::config::{
 use crate::state::{ServiceState, State, TunnelState};
 use anyhow::{bail, Context, Result};
 use std::fs::{self, OpenOptions};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -276,6 +277,11 @@ fn quote_cmd_path(path: &Path) -> String {
 
 pub fn pid_listening_on_port(port: u16) -> Result<Option<u32>> {
     Ok(pids_listening_on_port(port)?.into_iter().next())
+}
+
+pub fn tcp_port_open(port: u16) -> bool {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok()
 }
 
 pub fn pids_listening_on_port(port: u16) -> Result<Vec<u32>> {

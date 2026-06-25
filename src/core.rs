@@ -636,7 +636,7 @@ pub fn open(env: &BridgeEnv, id: &str) -> Result<String> {
         }
         let mut local_tunnel = false;
         if local_forward_allowed(env, &service.tunnel_modes) {
-            if reverse_forward_listener(&service.tunnel_modes, service.port).is_none() {
+            if wait_for_reverse_forward_listener(&service.tunnel_modes, service.port).is_none() {
                 let mut state = State::load(&env.paths.state_file)?;
                 let _ = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
                 state.save(&env.paths.state_file)?;
@@ -970,7 +970,7 @@ fn start_config_tunnel_or_reuse_reverse(
     cfg: &BridgeConfig,
     messages: &mut Vec<String>,
 ) -> Result<()> {
-    if let Some(pid) = reverse_forward_listener(&cfg.tunnel.modes, cfg.port) {
+    if let Some(pid) = wait_for_reverse_forward_listener(&cfg.tunnel.modes, cfg.port) {
         messages.push(format!(
             "local port {} already available via reverse tunnel pid {}",
             cfg.port, pid
@@ -1002,7 +1002,7 @@ fn start_peer_service_tunnel_or_reuse_reverse(
 ) -> Result<()> {
     let local_port = local_port.unwrap_or(service.port);
     if local_port == service.port {
-        if let Some(pid) = reverse_forward_listener(&service.tunnel_modes, local_port) {
+        if let Some(pid) = wait_for_reverse_forward_listener(&service.tunnel_modes, local_port) {
             messages.push(format!(
                 "local port {} already available via reverse tunnel pid {}",
                 local_port, pid
@@ -1018,11 +1018,29 @@ fn start_peer_service_tunnel_or_reuse_reverse(
     Ok(())
 }
 
-fn reverse_forward_listener(modes: &[TunnelMode], port: u16) -> Option<u32> {
+fn wait_for_reverse_forward_listener(modes: &[TunnelMode], port: u16) -> Option<String> {
+    for attempt in 0..20 {
+        if let Some(pid) = reverse_forward_listener(modes, port) {
+            return Some(pid);
+        }
+        if attempt < 19 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    None
+}
+
+fn reverse_forward_listener(modes: &[TunnelMode], port: u16) -> Option<String> {
     if !modes.contains(&TunnelMode::ReverseForward) {
         return None;
     }
-    process::pid_listening_on_port(port).ok().flatten()
+    if let Some(pid) = process::pid_listening_on_port(port).ok().flatten() {
+        return Some(pid.to_string());
+    }
+    if process::tcp_port_open(port) {
+        return Some("unknown".into());
+    }
+    None
 }
 
 fn start_peer_service_tunnel(
