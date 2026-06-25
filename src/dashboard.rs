@@ -19,7 +19,7 @@ pub fn serve(env: DashboardEnv, host: &str, port: u16, include_peers: bool) -> R
     let listener = TcpListener::bind(&addr).with_context(|| format!("bind dashboard on {addr}"))?;
     let token = dashboard_token()?;
     let runtime = DashboardRuntime::new(env, include_peers);
-    runtime.refresh_peers_if_needed(Duration::ZERO);
+    runtime.refresh_exports_if_needed(Duration::ZERO);
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
@@ -40,48 +40,51 @@ pub fn port_rows(env: &DashboardEnv, include_peers: bool) -> Result<Vec<PortRow>
 struct DashboardRuntime {
     env: DashboardEnv,
     include_peers: bool,
-    peer_cache: PeerCache,
+    export_cache: ExportCache,
 }
 
 impl DashboardRuntime {
     fn new(env: DashboardEnv, include_peers: bool) -> Self {
-        let cache_path = env.paths.state_file.with_file_name("peer-cache.json");
+        let cache_path = env.paths.state_file.with_file_name("dashboard-cache.json");
         Self {
             env,
             include_peers,
-            peer_cache: PeerCache::load(cache_path),
+            export_cache: ExportCache::load(cache_path),
         }
     }
 
     fn port_rows(&self) -> Result<Vec<PortRow>> {
-        let registry = Registry::load(&self.env.paths.registry_file)?;
         let state = State::load(&self.env.paths.state_file)?;
-        let mut exports = vec![registry.export(&self.env.machine_id)?];
-        if self.include_peers {
-            self.refresh_peers_if_needed(Duration::from_secs(30));
-            exports.extend(self.peer_cache.exports());
+        self.refresh_exports_if_needed(Duration::from_secs(30));
+        let mut exports = self.export_cache.exports();
+        if exports.is_empty() {
+            exports = self.fast_local_exports()?;
         }
         validate_no_port_conflicts(&exports)?;
         Ok(core::port_rows_from_exports(exports, &self.env, &state))
     }
 
-    fn refresh_peers_if_needed(&self, min_interval: Duration) {
-        if !self.include_peers || self.env.app.peers.is_empty() {
-            return;
-        }
-        self.peer_cache
-            .refresh_if_needed(self.env.app.clone(), min_interval);
+    fn fast_local_exports(&self) -> Result<Vec<RegistryExport>> {
+        let registry = Registry::load(&self.env.paths.registry_file)?;
+        Ok(vec![
+            registry.export_with_runtime(&self.env.machine_id, false)?
+        ])
+    }
+
+    fn refresh_exports_if_needed(&self, min_interval: Duration) {
+        self.export_cache
+            .refresh_if_needed(self.env.clone(), self.include_peers, min_interval);
     }
 }
 
 #[derive(Clone)]
-struct PeerCache {
+struct ExportCache {
     path: PathBuf,
-    inner: Arc<Mutex<PeerCacheState>>,
+    inner: Arc<Mutex<ExportCacheState>>,
 }
 
 #[derive(Default)]
-struct PeerCacheState {
+struct ExportCacheState {
     exports: Vec<RegistryExport>,
     warnings: Vec<String>,
     updated_at: Option<String>,
@@ -90,18 +93,18 @@ struct PeerCacheState {
 }
 
 #[derive(Serialize, Deserialize)]
-struct DiskPeerCache {
+struct DiskExportCache {
     updated_at: String,
     exports: Vec<RegistryExport>,
     #[serde(default)]
     warnings: Vec<String>,
 }
 
-impl PeerCache {
+impl ExportCache {
     fn load(path: PathBuf) -> Self {
-        let mut state = PeerCacheState::default();
+        let mut state = ExportCacheState::default();
         if let Ok(bytes) = fs::read(&path) {
-            if let Ok(cache) = serde_json::from_slice::<DiskPeerCache>(&bytes) {
+            if let Ok(cache) = serde_json::from_slice::<DiskExportCache>(&bytes) {
                 state.exports = cache.exports;
                 state.warnings = cache.warnings;
                 state.updated_at = Some(cache.updated_at);
@@ -120,7 +123,7 @@ impl PeerCache {
             .unwrap_or_default()
     }
 
-    fn refresh_if_needed(&self, app: crate::config::AppConfig, min_interval: Duration) {
+    fn refresh_if_needed(&self, env: DashboardEnv, include_peers: bool, min_interval: Duration) {
         {
             let Ok(mut state) = self.inner.lock() else {
                 return;
@@ -142,17 +145,33 @@ impl PeerCache {
         let inner = Arc::clone(&self.inner);
         let path = self.path.clone();
         std::thread::spawn(move || {
-            let results = peer::fetch_peer_exports(&app);
             let mut exports = Vec::new();
             let mut warnings = Vec::new();
-            for (name, result) in results {
-                match result {
+            match Registry::load(&env.paths.registry_file) {
+                Ok(registry) => match registry.export(&env.machine_id) {
                     Ok(export) => exports.push(export),
-                    Err(err) => warnings.push(format!("{name}: {err}")),
+                    Err(err) => {
+                        warnings.push(format!("local runtime export: {err}"));
+                        match registry.export_with_runtime(&env.machine_id, false) {
+                            Ok(export) => exports.push(export),
+                            Err(fallback_err) => {
+                                warnings.push(format!("local config export: {fallback_err}"))
+                            }
+                        }
+                    }
+                },
+                Err(err) => warnings.push(format!("local registry: {err}")),
+            }
+            if include_peers {
+                for (name, result) in peer::fetch_peer_exports(&env.app) {
+                    match result {
+                        Ok(export) => exports.push(export),
+                        Err(err) => warnings.push(format!("peer {name}: {err}")),
+                    }
                 }
             }
             for warning in &warnings {
-                eprintln!("warning: could not query peer `{warning}`");
+                eprintln!("warning: dashboard export refresh failed for {warning}");
             }
 
             let Ok(mut state) = inner.lock() else {
@@ -167,7 +186,7 @@ impl PeerCache {
             let updated_at = crate::time::now_iso();
             state.exports = exports;
             state.updated_at = Some(updated_at.clone());
-            let disk = DiskPeerCache {
+            let disk = DiskExportCache {
                 updated_at,
                 exports: state.exports.clone(),
                 warnings: state.warnings.clone(),

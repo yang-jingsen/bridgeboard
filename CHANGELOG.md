@@ -1,11 +1,11 @@
 # Bridgeboard Changelog
 
-- 2026-06-25: Made the dashboard resilient to slow or flaky SSH peer discovery.
-  The web dashboard now keeps a peer-export cache in memory and on disk
-  (`peer-cache.json`). `/api/ports` returns local rows plus the last successful
-  peer snapshot immediately while a background refresh updates the cache. A
-  slow peer no longer blocks the dashboard request or makes remote services
-  disappear on transient SSH timeouts.
+- 2026-06-25: Made the dashboard resilient to slow Windows PID probes and
+  flaky SSH peer discovery. The web dashboard now keeps export snapshots in
+  memory and on disk (`dashboard-cache.json`). `/api/ports` returns the last
+  successful local/peer snapshot immediately while a background refresh updates
+  the cache. Slow local port checks or peer SSH calls no longer block the page
+  or make remote services disappear on transient timeouts.
 - 2026-06-24: Made peer registry fetches fast by default. `registry export`
   now accepts `--no-runtime`, and SSH peer discovery uses that mode so the
   dashboard can list remote services without waiting on every Windows
