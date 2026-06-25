@@ -60,7 +60,9 @@ impl DashboardRuntime {
         if exports.is_empty() {
             exports = self.fast_local_exports()?;
         }
-        validate_no_port_conflicts(&exports)?;
+        if let Err(err) = validate_no_port_conflicts(&exports) {
+            eprintln!("warning: dashboard port conflict: {err}");
+        }
         Ok(core::port_rows_from_exports(exports, &self.env, &state))
     }
 
@@ -997,7 +999,9 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     function appPrimary(row) {
       const state = serviceState(row.runtime_status);
       if (state.key === 'running') return { action: 'open', label: 'Open', className: 'primary' };
-      if (row.startup_policy === 'on_demand') return { action: 'open', label: 'Start & Open', className: 'primary' };
+      if (row.startup_policy === 'on_demand') {
+        return { action: isRemote(row) ? 'remote-up-open' : 'open', label: 'Start & Open', className: 'primary' };
+      }
       return { action: isRemote(row) ? 'remote-up' : 'up', label: 'Start', className: 'primary' };
     }
 
@@ -1013,6 +1017,8 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       const primary = appPrimary(row);
       if (primary.action === 'open') {
         openService(id);
+      } else if (primary.action === 'remote-up-open') {
+        runActionThenOpen(id, 'remote-up');
       } else {
         runAction(id, primary.action);
       }
@@ -1273,6 +1279,28 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         showToast(result.message || 'done');
         if (!response.ok || !result.ok) throw new Error(result.message || 'failed');
         await loadPorts();
+      } catch (err) {
+        status.textContent = 'Action failed: ' + err;
+        showToast('Action failed: ' + err);
+      } finally {
+        busyKey = '';
+        render();
+      }
+    }
+
+    async function runActionThenOpen(id, action, extra = {}) {
+      const status = document.getElementById('status');
+      busyKey = id + ':' + action;
+      render();
+      status.textContent = action + ' ' + id + '...';
+      try {
+        const params = new URLSearchParams({ id, action, ...extra });
+        const response = await fetch('/api/action?' + params.toString(), authOptions({ method: 'POST', cache: 'no-store' }));
+        const result = await response.json();
+        showToast(result.message || 'done');
+        if (!response.ok || !result.ok) throw new Error(result.message || 'failed');
+        await loadPorts();
+        openService(id);
       } catch (err) {
         status.textContent = 'Action failed: ' + err;
         showToast('Action failed: ' + err);

@@ -1,5 +1,11 @@
 # Bridgeboard Changelog
 
+- 2026-06-25: Fixed two dashboard regressions seen with tethys/eva-02 peer
+  management. The dashboard API now logs peer port conflicts but still returns
+  the available service rows, so one unrelated duplicate port no longer makes
+  the whole peer view disappear. The Apps launcher now treats remote on-demand
+  "Start & Open" as `remote-up` followed by open, instead of only creating a
+  local forward for a service that has not been started on its owner host.
 - 2026-06-25: Made the dashboard resilient to slow Windows PID probes and
   flaky SSH peer discovery. The web dashboard now keeps export snapshots in
   memory and on disk (`dashboard-cache.json`). `/api/ports` returns the last
