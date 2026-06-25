@@ -1,19 +1,29 @@
 use crate::core;
 pub use crate::core::{BridgeEnv as DashboardEnv, PortRow};
+use crate::peer;
+use crate::registry::{validate_no_port_conflicts, Registry, RegistryExport};
+use crate::state::State;
 use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use url::Url;
 
 pub fn serve(env: DashboardEnv, host: &str, port: u16, include_peers: bool) -> Result<()> {
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).with_context(|| format!("bind dashboard on {addr}"))?;
     let token = dashboard_token()?;
+    let runtime = DashboardRuntime::new(env, include_peers);
+    runtime.refresh_peers_if_needed(Duration::ZERO);
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                if let Err(err) = handle_request(&env, &mut stream, include_peers, &token) {
+                if let Err(err) = handle_request(&runtime, &mut stream, &token) {
                     eprintln!("dashboard request failed: {err}");
                 }
             }
@@ -27,12 +37,152 @@ pub fn port_rows(env: &DashboardEnv, include_peers: bool) -> Result<Vec<PortRow>
     core::port_rows(env, include_peers)
 }
 
-fn handle_request(
-    env: &DashboardEnv,
-    stream: &mut TcpStream,
+struct DashboardRuntime {
+    env: DashboardEnv,
     include_peers: bool,
-    token: &str,
-) -> Result<()> {
+    peer_cache: PeerCache,
+}
+
+impl DashboardRuntime {
+    fn new(env: DashboardEnv, include_peers: bool) -> Self {
+        let cache_path = env.paths.state_file.with_file_name("peer-cache.json");
+        Self {
+            env,
+            include_peers,
+            peer_cache: PeerCache::load(cache_path),
+        }
+    }
+
+    fn port_rows(&self) -> Result<Vec<PortRow>> {
+        let registry = Registry::load(&self.env.paths.registry_file)?;
+        let state = State::load(&self.env.paths.state_file)?;
+        let mut exports = vec![registry.export(&self.env.machine_id)?];
+        if self.include_peers {
+            self.refresh_peers_if_needed(Duration::from_secs(30));
+            exports.extend(self.peer_cache.exports());
+        }
+        validate_no_port_conflicts(&exports)?;
+        Ok(core::port_rows_from_exports(exports, &self.env, &state))
+    }
+
+    fn refresh_peers_if_needed(&self, min_interval: Duration) {
+        if !self.include_peers || self.env.app.peers.is_empty() {
+            return;
+        }
+        self.peer_cache
+            .refresh_if_needed(self.env.app.clone(), min_interval);
+    }
+}
+
+#[derive(Clone)]
+struct PeerCache {
+    path: PathBuf,
+    inner: Arc<Mutex<PeerCacheState>>,
+}
+
+#[derive(Default)]
+struct PeerCacheState {
+    exports: Vec<RegistryExport>,
+    warnings: Vec<String>,
+    updated_at: Option<String>,
+    last_refresh: Option<Instant>,
+    refreshing: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DiskPeerCache {
+    updated_at: String,
+    exports: Vec<RegistryExport>,
+    #[serde(default)]
+    warnings: Vec<String>,
+}
+
+impl PeerCache {
+    fn load(path: PathBuf) -> Self {
+        let mut state = PeerCacheState::default();
+        if let Ok(bytes) = fs::read(&path) {
+            if let Ok(cache) = serde_json::from_slice::<DiskPeerCache>(&bytes) {
+                state.exports = cache.exports;
+                state.warnings = cache.warnings;
+                state.updated_at = Some(cache.updated_at);
+            }
+        }
+        Self {
+            path,
+            inner: Arc::new(Mutex::new(state)),
+        }
+    }
+
+    fn exports(&self) -> Vec<RegistryExport> {
+        self.inner
+            .lock()
+            .map(|state| state.exports.clone())
+            .unwrap_or_default()
+    }
+
+    fn refresh_if_needed(&self, app: crate::config::AppConfig, min_interval: Duration) {
+        {
+            let Ok(mut state) = self.inner.lock() else {
+                return;
+            };
+            if state.refreshing {
+                return;
+            }
+            if state
+                .last_refresh
+                .map(|last| last.elapsed() < min_interval)
+                .unwrap_or(false)
+            {
+                return;
+            }
+            state.refreshing = true;
+            state.last_refresh = Some(Instant::now());
+        }
+
+        let inner = Arc::clone(&self.inner);
+        let path = self.path.clone();
+        std::thread::spawn(move || {
+            let results = peer::fetch_peer_exports(&app);
+            let mut exports = Vec::new();
+            let mut warnings = Vec::new();
+            for (name, result) in results {
+                match result {
+                    Ok(export) => exports.push(export),
+                    Err(err) => warnings.push(format!("{name}: {err}")),
+                }
+            }
+            for warning in &warnings {
+                eprintln!("warning: could not query peer `{warning}`");
+            }
+
+            let Ok(mut state) = inner.lock() else {
+                return;
+            };
+            state.refreshing = false;
+            state.last_refresh = Some(Instant::now());
+            state.warnings = warnings;
+            if exports.is_empty() && !state.exports.is_empty() {
+                return;
+            }
+            let updated_at = crate::time::now_iso();
+            state.exports = exports;
+            state.updated_at = Some(updated_at.clone());
+            let disk = DiskPeerCache {
+                updated_at,
+                exports: state.exports.clone(),
+                warnings: state.warnings.clone(),
+            };
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if let Ok(text) = serde_json::to_string_pretty(&disk) {
+                let _ = fs::write(&path, text + "\n");
+            }
+        });
+    }
+}
+
+fn handle_request(runtime: &DashboardRuntime, stream: &mut TcpStream, token: &str) -> Result<()> {
     let mut buffer = [0_u8; 4096];
     let n = stream.read(&mut buffer)?;
     let request = String::from_utf8_lossy(&buffer[..n]);
@@ -45,11 +195,12 @@ fn handle_request(
     match url.path() {
         "/" | "/index.html" => respond_html(stream, &dashboard_html(token))?,
         "/api/ports" => {
-            let rows = port_rows(env, include_peers)?;
+            let rows = runtime.port_rows()?;
             respond_json(stream, &serde_json::to_string_pretty(&rows)?)?;
         }
         "/api/agent-prompt" => {
-            let machine = query_value(&url, "machine").unwrap_or_else(|| env.machine_id.clone());
+            let machine =
+                query_value(&url, "machine").unwrap_or_else(|| runtime.env.machine_id.clone());
             respond_json(
                 stream,
                 &serde_json::to_string_pretty(&json!({
@@ -64,7 +215,7 @@ fn handle_request(
                 stream,
                 &serde_json::to_string_pretty(&json!({
                     "ok": true,
-                    "prompts": agent_prompt_entries(env),
+                    "prompts": agent_prompt_entries(&runtime.env),
                 }))?,
             )?;
         }
@@ -75,7 +226,7 @@ fn handle_request(
             let id = query_value(&url, "id").context("missing id")?;
             let action = query_value(&url, "action").context("missing action")?;
             let title = query_value(&url, "title");
-            match run_action(env, &id, &action, title.as_deref()) {
+            match run_action(&runtime.env, &id, &action, title.as_deref()) {
                 Ok(message) => respond_json(
                     stream,
                     &serde_json::to_string_pretty(&json!({

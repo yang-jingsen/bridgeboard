@@ -119,7 +119,7 @@ pub fn port_rows(env: &BridgeEnv, include_peers: bool) -> Result<Vec<PortRow>> {
     Ok(port_rows_from_exports(exports, env, &state))
 }
 
-fn port_rows_from_exports(
+pub(crate) fn port_rows_from_exports(
     exports: Vec<RegistryExport>,
     env: &BridgeEnv,
     state: &State,
