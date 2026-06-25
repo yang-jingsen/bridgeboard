@@ -239,13 +239,15 @@ pub fn up_from_peer(
     let owner = peer_service_owner(env, peer_name, &service);
     let mut messages = run_remote_up(env, owner, id)?;
     let mut state = State::load(&env.paths.state_file)?;
-    let pid = start_peer_service_tunnel(env, &mut state, peer_name, &service, local_port)?;
+    start_peer_service_tunnel_or_reuse_reverse(
+        env,
+        &mut state,
+        peer_name,
+        &service,
+        local_port,
+        &mut messages,
+    )?;
     state.save(&env.paths.state_file)?;
-    let local_port = local_port.unwrap_or(service.port);
-    messages.push(format!(
-        "local tunnel {} -> {}:{} pid {}",
-        local_port, service.owner_host, service.port, pid
-    ));
     Ok(messages)
 }
 
@@ -256,20 +258,9 @@ pub fn remote_up(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
             return up(env, id);
         }
         let mut messages = run_remote_up(env, &cfg.owner_host, id)?;
-        ensure_local_forward_allowed(env, &cfg.id, &cfg.tunnel.modes)?;
         let mut state = State::load(&env.paths.state_file)?;
-        let pid = process::start_tunnel(
-            &cfg,
-            TunnelMode::LocalForward,
-            &cfg.owner_host,
-            peer::ssh_alias_for(&env.app, &cfg.owner_host),
-            &mut state,
-        )?;
+        start_config_tunnel_or_reuse_reverse(env, &mut state, &cfg, &mut messages)?;
         state.save(&env.paths.state_file)?;
-        messages.push(format!(
-            "local tunnel {} -> {} pid {}",
-            cfg.port, cfg.owner_host, pid
-        ));
         return Ok(messages);
     }
 
@@ -283,12 +274,15 @@ pub fn remote_up(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     };
     let mut messages = run_remote_up(env, owner, id)?;
     let mut state = State::load(&env.paths.state_file)?;
-    let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
+    start_peer_service_tunnel_or_reuse_reverse(
+        env,
+        &mut state,
+        &peer_name,
+        &service,
+        None,
+        &mut messages,
+    )?;
     state.save(&env.paths.state_file)?;
-    messages.push(format!(
-        "local tunnel {} -> {} pid {}",
-        service.port, service.owner_host, pid
-    ));
     Ok(messages)
 }
 
@@ -323,20 +317,9 @@ pub fn remote_restart(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
             return restart(env, id);
         }
         let mut messages = run_remote_restart(env, &cfg.owner_host, id)?;
-        ensure_local_forward_allowed(env, &cfg.id, &cfg.tunnel.modes)?;
         let mut state = State::load(&env.paths.state_file)?;
-        let pid = process::start_tunnel(
-            &cfg,
-            TunnelMode::LocalForward,
-            &cfg.owner_host,
-            peer::ssh_alias_for(&env.app, &cfg.owner_host),
-            &mut state,
-        )?;
+        start_config_tunnel_or_reuse_reverse(env, &mut state, &cfg, &mut messages)?;
         state.save(&env.paths.state_file)?;
-        messages.push(format!(
-            "local tunnel {} -> {} pid {}",
-            cfg.port, cfg.owner_host, pid
-        ));
         return Ok(messages);
     }
 
@@ -350,12 +333,15 @@ pub fn remote_restart(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     };
     let mut messages = run_remote_restart(env, owner, id)?;
     let mut state = State::load(&env.paths.state_file)?;
-    let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
+    start_peer_service_tunnel_or_reuse_reverse(
+        env,
+        &mut state,
+        &peer_name,
+        &service,
+        None,
+        &mut messages,
+    )?;
     state.save(&env.paths.state_file)?;
-    messages.push(format!(
-        "local tunnel {} -> {} pid {}",
-        service.port, service.owner_host, pid
-    ));
     Ok(messages)
 }
 
@@ -525,12 +511,15 @@ fn up_inner(
         };
         let owner = peer_service_owner(env, &peer_name, &service);
         messages.extend(run_remote_up(env, owner, id)?);
-        let pid = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
+        start_peer_service_tunnel_or_reuse_reverse(
+            env,
+            &mut state,
+            &peer_name,
+            &service,
+            None,
+            &mut messages,
+        )?;
         state.save(&env.paths.state_file)?;
-        messages.push(format!(
-            "local tunnel {} -> {}:{} pid {}",
-            service.port, service.owner_host, service.port, pid
-        ));
         return Ok(messages);
     };
 
@@ -557,19 +546,7 @@ fn up_inner(
         }
     } else {
         messages.extend(run_remote_up(env, &cfg.owner_host, id)?);
-        ensure_local_forward_allowed(env, &cfg.id, &cfg.tunnel.modes)?;
-        let ssh_alias = peer::ssh_alias_for(&env.app, &cfg.owner_host);
-        let pid = process::start_tunnel(
-            &cfg,
-            TunnelMode::LocalForward,
-            &cfg.owner_host,
-            ssh_alias,
-            &mut state,
-        )?;
-        messages.push(format!(
-            "local tunnel {} -> {} pid {}",
-            cfg.port, cfg.owner_host, pid
-        ));
+        start_config_tunnel_or_reuse_reverse(env, &mut state, &cfg, &mut messages)?;
     }
     state.save(&env.paths.state_file)?;
     Ok(messages)
@@ -659,9 +636,11 @@ pub fn open(env: &BridgeEnv, id: &str) -> Result<String> {
         }
         let mut local_tunnel = false;
         if local_forward_allowed(env, &service.tunnel_modes) {
-            let mut state = State::load(&env.paths.state_file)?;
-            let _ = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
-            state.save(&env.paths.state_file)?;
+            if reverse_forward_listener(&service.tunnel_modes, service.port).is_none() {
+                let mut state = State::load(&env.paths.state_file)?;
+                let _ = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
+                state.save(&env.paths.state_file)?;
+            }
             local_tunnel = true;
         }
         peer_open_url(&service, local_tunnel)
@@ -983,6 +962,67 @@ fn peer_service_owner<'a>(
     } else {
         peer_name
     }
+}
+
+fn start_config_tunnel_or_reuse_reverse(
+    env: &BridgeEnv,
+    state: &mut State,
+    cfg: &BridgeConfig,
+    messages: &mut Vec<String>,
+) -> Result<()> {
+    if let Some(pid) = reverse_forward_listener(&cfg.tunnel.modes, cfg.port) {
+        messages.push(format!(
+            "local port {} already available via reverse tunnel pid {}",
+            cfg.port, pid
+        ));
+        return Ok(());
+    }
+    ensure_local_forward_allowed(env, &cfg.id, &cfg.tunnel.modes)?;
+    let pid = process::start_tunnel(
+        cfg,
+        TunnelMode::LocalForward,
+        &cfg.owner_host,
+        peer::ssh_alias_for(&env.app, &cfg.owner_host),
+        state,
+    )?;
+    messages.push(format!(
+        "local tunnel {} -> {} pid {}",
+        cfg.port, cfg.owner_host, pid
+    ));
+    Ok(())
+}
+
+fn start_peer_service_tunnel_or_reuse_reverse(
+    env: &BridgeEnv,
+    state: &mut State,
+    peer_name: &str,
+    service: &ServiceExport,
+    local_port: Option<u16>,
+    messages: &mut Vec<String>,
+) -> Result<()> {
+    let local_port = local_port.unwrap_or(service.port);
+    if local_port == service.port {
+        if let Some(pid) = reverse_forward_listener(&service.tunnel_modes, local_port) {
+            messages.push(format!(
+                "local port {} already available via reverse tunnel pid {}",
+                local_port, pid
+            ));
+            return Ok(());
+        }
+    }
+    let pid = start_peer_service_tunnel(env, state, peer_name, service, Some(local_port))?;
+    messages.push(format!(
+        "local tunnel {} -> {}:{} pid {}",
+        local_port, service.owner_host, service.port, pid
+    ));
+    Ok(())
+}
+
+fn reverse_forward_listener(modes: &[TunnelMode], port: u16) -> Option<u32> {
+    if !modes.contains(&TunnelMode::ReverseForward) {
+        return None;
+    }
+    process::pid_listening_on_port(port).ok().flatten()
 }
 
 fn start_peer_service_tunnel(
