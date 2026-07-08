@@ -1,5 +1,10 @@
 # Bridgeboard Changelog
 
+- 2026-07-09: Avoided a slow Windows dashboard path when showing peer
+  services. Remote rows now decide whether to use a same-port local forward or
+  a fallback port from a direct loopback port-open check, instead of running a
+  per-row process-owner lookup through PowerShell/CIM. This keeps eva-02 and
+  tethys peer visibility responsive when many peer services are shown.
 - 2026-06-26: Made peer service identity owner-aware for federation. Port
   conflict validation is now scoped to `(owner_host, port)`, so different hosts
   can each expose their own service on the same owner-local port. Dashboard and

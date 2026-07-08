@@ -232,12 +232,7 @@ pub(crate) fn port_rows_from_exports(
 }
 
 fn local_port_needs_peer_fallback(port: u16) -> bool {
-    let Ok(Some(pid)) = process::pid_listening_on_port(port) else {
-        return false;
-    };
-    !process::describe_pid(pid)
-        .to_ascii_lowercase()
-        .contains("ssh")
+    process::tcp_port_open(port)
 }
 
 fn peer_fallback_local_port(port: u16) -> Option<u16> {
