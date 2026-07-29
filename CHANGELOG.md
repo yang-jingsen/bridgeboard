@@ -1,5 +1,21 @@
 # Bridgeboard Changelog
 
+- 2026-07-29: Started the TethysUNE terminal-sessions branch. The dashboard
+  now has a `Terminals` view backed by `portable-pty`, so Linux shells and the
+  Windows ConPTY path share one internal API. The MVP exposes token-protected
+  local terminal endpoints for start/list/read/input/resize/stop, supports
+  launching a local shell or a locally registered service with
+  `service.command`/`service.start_command`, and adds `Terminal` buttons to
+  local service cards. The first UI is a lightweight polling terminal pane with
+  ANSI escape cleanup; full xterm.js/WebSocket TUI support remains a follow-up.
+  Terminal APIs are disabled when the dashboard is bound to a non-loopback
+  address, even if the normal dashboard was explicitly exposed.
+  Validation: `cargo fmt --check` passed; `cargo test` passed with 18 tests;
+  `cargo check --bins` passed; `cargo check --target x86_64-pc-windows-gnu
+  --bin bridgeboard` passed; a Linux shell session was started through the
+  dashboard API, received input, returned output, and was stopped. Direct
+  Tauri check on this Linux host still requires GTK/WebKit pkg-config
+  development files.
 - 2026-07-09: Avoided a slow Windows dashboard path when showing peer
   services. Remote rows now decide whether to use a same-port local forward or
   a fallback port from a direct loopback port-open check, instead of running a

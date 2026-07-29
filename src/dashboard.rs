@@ -3,6 +3,7 @@ pub use crate::core::{BridgeEnv as DashboardEnv, PortRow};
 use crate::peer;
 use crate::registry::{validate_no_port_conflicts, Registry, RegistryExport};
 use crate::state::State;
+use crate::terminal::TerminalManager;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -18,7 +19,7 @@ pub fn serve(env: DashboardEnv, host: &str, port: u16, include_peers: bool) -> R
     let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).with_context(|| format!("bind dashboard on {addr}"))?;
     let token = dashboard_token()?;
-    let runtime = DashboardRuntime::new(env, include_peers);
+    let runtime = DashboardRuntime::new(env, include_peers, terminal_api_allowed(host));
     runtime.refresh_exports_if_needed(Duration::ZERO);
     for stream in listener.incoming() {
         match stream {
@@ -41,15 +42,19 @@ struct DashboardRuntime {
     env: DashboardEnv,
     include_peers: bool,
     export_cache: ExportCache,
+    terminals: TerminalManager,
+    terminal_api_enabled: bool,
 }
 
 impl DashboardRuntime {
-    fn new(env: DashboardEnv, include_peers: bool) -> Self {
+    fn new(env: DashboardEnv, include_peers: bool, terminal_api_enabled: bool) -> Self {
         let cache_path = env.paths.state_file.with_file_name("dashboard-cache.json");
         Self {
             env,
             include_peers,
             export_cache: ExportCache::load(cache_path),
+            terminals: TerminalManager::default(),
+            terminal_api_enabled,
         }
     }
 
@@ -204,7 +209,7 @@ impl ExportCache {
 }
 
 fn handle_request(runtime: &DashboardRuntime, stream: &mut TcpStream, token: &str) -> Result<()> {
-    let mut buffer = [0_u8; 4096];
+    let mut buffer = [0_u8; 65536];
     let n = stream.read(&mut buffer)?;
     let request = String::from_utf8_lossy(&buffer[..n]);
     let first_line = request.lines().next().unwrap_or_default();
@@ -320,10 +325,176 @@ fn handle_request(runtime: &DashboardRuntime, stream: &mut TcpStream, token: &st
                 )?,
             }
         }
+        "/api/terminal/sessions" => {
+            if !require_terminal_access(runtime, stream, method, &request, token)? {
+                return Ok(());
+            }
+            respond_json(
+                stream,
+                &serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "sessions": runtime.terminals.list(),
+                }))?,
+            )?;
+        }
+        "/api/terminal/start" => {
+            if !require_terminal_access(runtime, stream, method, &request, token)? {
+                return Ok(());
+            }
+            let cols = terminal_dimension(&url, "cols", 96);
+            let rows = terminal_dimension(&url, "rows", 26);
+            let service_id =
+                query_value(&url, "service_id").filter(|value| !value.trim().is_empty());
+            let result = if let Some(service_id) = service_id {
+                runtime
+                    .terminals
+                    .start_service(&runtime.env, &service_id, cols, rows)
+            } else {
+                runtime.terminals.start_shell(cols, rows)
+            };
+            match result {
+                Ok(session) => respond_json(
+                    stream,
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "session": session,
+                    }))?,
+                )?,
+                Err(err) => respond_json_status(
+                    stream,
+                    "500 Internal Server Error",
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "message": err.to_string(),
+                    }))?,
+                )?,
+            }
+        }
+        "/api/terminal/read" => {
+            if !require_terminal_access(runtime, stream, method, &request, token)? {
+                return Ok(());
+            }
+            let session_id = query_value(&url, "session").context("missing session")?;
+            let after = query_value(&url, "after").and_then(|value| value.parse::<u64>().ok());
+            match runtime.terminals.read(&session_id, after) {
+                Ok(read) => respond_json(
+                    stream,
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "read": read,
+                    }))?,
+                )?,
+                Err(err) => respond_json_status(
+                    stream,
+                    "404 Not Found",
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "message": err.to_string(),
+                    }))?,
+                )?,
+            }
+        }
+        "/api/terminal/input" => {
+            if !require_terminal_access(runtime, stream, method, &request, token)? {
+                return Ok(());
+            }
+            let session_id = query_value(&url, "session").context("missing session")?;
+            let data = query_value(&url, "data").unwrap_or_default();
+            match runtime.terminals.input(&session_id, &data) {
+                Ok(session) => respond_json(
+                    stream,
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "session": session,
+                    }))?,
+                )?,
+                Err(err) => respond_json_status(
+                    stream,
+                    "500 Internal Server Error",
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "message": err.to_string(),
+                    }))?,
+                )?,
+            }
+        }
+        "/api/terminal/resize" => {
+            if !require_terminal_access(runtime, stream, method, &request, token)? {
+                return Ok(());
+            }
+            let session_id = query_value(&url, "session").context("missing session")?;
+            let cols = terminal_dimension(&url, "cols", 96);
+            let rows = terminal_dimension(&url, "rows", 26);
+            match runtime.terminals.resize(&session_id, cols, rows) {
+                Ok(session) => respond_json(
+                    stream,
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "session": session,
+                    }))?,
+                )?,
+                Err(err) => respond_json_status(
+                    stream,
+                    "500 Internal Server Error",
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "message": err.to_string(),
+                    }))?,
+                )?,
+            }
+        }
+        "/api/terminal/stop" => {
+            if !require_terminal_access(runtime, stream, method, &request, token)? {
+                return Ok(());
+            }
+            let session_id = query_value(&url, "session").context("missing session")?;
+            match runtime.terminals.stop(&session_id) {
+                Ok(session) => respond_json(
+                    stream,
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "session": session,
+                    }))?,
+                )?,
+                Err(err) => respond_json_status(
+                    stream,
+                    "500 Internal Server Error",
+                    &serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "message": err.to_string(),
+                    }))?,
+                )?,
+            }
+        }
         "/health" => respond_text(stream, "ok\n")?,
         _ => respond_not_found(stream)?,
     }
     Ok(())
+}
+
+fn terminal_dimension(url: &Url, key: &str, default: u16) -> u16 {
+    query_value(url, key)
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(default)
+}
+
+fn require_terminal_access(
+    runtime: &DashboardRuntime,
+    stream: &mut TcpStream,
+    method: &str,
+    request: &str,
+    token: &str,
+) -> Result<bool> {
+    if !runtime.terminal_api_enabled {
+        respond(
+            stream,
+            "403 Forbidden",
+            "application/json; charset=utf-8",
+            r#"{"ok":false,"message":"terminal API is disabled for non-loopback dashboard binds"}"#,
+        )?;
+        return Ok(false);
+    }
+    require_post_token(stream, method, request, token)
 }
 
 fn require_post_token(
@@ -366,6 +537,10 @@ fn query_value(url: &Url, key: &str) -> Option<String> {
     url.query_pairs()
         .find(|(candidate, _)| candidate == key)
         .map(|(_, value)| value.into_owned())
+}
+
+fn terminal_api_allowed(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 fn agent_prompt_for(machine_id: &str) -> String {
@@ -768,6 +943,90 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #e5e8eb; font-size: 13px; white-space: nowrap; }
     th { background: var(--panel-2); font-size: 11px; text-transform: uppercase; color: var(--muted); }
     tr:last-child td { border-bottom: 0; }
+    .terminal-layout {
+      height: 100%;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+      gap: 12px;
+    }
+    .terminal-side {
+      min-height: 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 10px;
+    }
+    .terminal-side-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .terminal-list { min-height: 0; overflow: auto; display: grid; align-content: start; gap: 6px; }
+    .terminal-item {
+      width: 100%;
+      text-align: left;
+      display: grid;
+      gap: 3px;
+      min-height: 46px;
+    }
+    .terminal-item.active { border-color: var(--accent); background: #e8f2f1; }
+    .terminal-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .terminal-item span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .terminal-panel {
+      min-height: 0;
+      background: #0c1116;
+      border: 1px solid #24313a;
+      border-radius: 8px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      overflow: hidden;
+    }
+    .terminal-bar {
+      background: #111922;
+      border-bottom: 1px solid #25323c;
+      padding: 9px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .terminal-bar strong { color: #edf5ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .terminal-bar .spacer { flex: 1 1 auto; }
+    .terminal-output {
+      margin: 0;
+      padding: 13px;
+      min-height: 0;
+      overflow: auto;
+      color: #d7efe7;
+      background: #070b0f;
+      font: 13px/1.45 Consolas, "Cascadia Mono", "SFMono-Regular", monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .terminal-input-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px;
+      padding: 9px;
+      background: #111922;
+      border-top: 1px solid #25323c;
+    }
+    .terminal-input-row input {
+      background: #071017;
+      color: #d7efe7;
+      border-color: #2d404b;
+      font-family: Consolas, "Cascadia Mono", "SFMono-Regular", monospace;
+    }
+    .terminal-empty {
+      height: 100%;
+      min-height: 340px;
+      display: grid;
+      place-items: center;
+      color: #8aa1af;
+      background: #070b0f;
+      border-radius: 8px;
+      border: 1px solid #24313a;
+    }
     .toast {
       position: fixed; left: 236px; bottom: 18px; max-width: min(560px, calc(100vw - 260px));
       background: #17212b; color: #f8fafc; padding: 12px 14px; border-radius: 8px;
@@ -784,6 +1043,8 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       .app-grid { grid-template-columns: 1fr; }
       .service-row { grid-template-columns: 1fr; }
       .actions { width: 100%; }
+      .terminal-layout { grid-template-columns: 1fr; }
+      .terminal-side { max-height: 220px; }
       .toast { left: 18px; max-width: calc(100vw - 36px); }
     }
     @media (prefers-color-scheme: dark) {
@@ -825,6 +1086,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       <nav class="nav">
         <button id="nav-apps" class="active" onclick="setView('apps')">Apps</button>
         <button id="nav-services" onclick="setView('services')">Services</button>
+        <button id="nav-terminals" onclick="setView('terminals')">Terminals</button>
         <button id="nav-ports" onclick="setView('ports')">Ports</button>
       </nav>
       <div class="sidebar-footer">
@@ -857,6 +1119,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       <p class="statusline" id="status">Loading services...</p>
       <section id="apps-view" class="view-pane"></section>
       <section id="services-view" class="view-pane"></section>
+      <section id="terminals-view" class="view-pane hidden"></section>
       <section id="ports-view" class="view-pane hidden"></section>
     </main>
   </div>
@@ -867,6 +1130,11 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     let loadingPorts = false;
     let lastFocusRefresh = 0;
     let filterText = '';
+    let terminalSessions = [];
+    let activeTerminalId = '';
+    let terminalBuffers = {};
+    let terminalAfterSeq = {};
+    let terminalPollTimer = null;
     const pinnedKey = 'bridgeboard:pinned-service-ids';
     const sortKey = 'bridgeboard:service-sort-mode';
     let pinnedIds = loadPinnedIds();
@@ -893,14 +1161,17 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       currentView = view;
       document.getElementById('nav-apps').classList.toggle('active', view === 'apps');
       document.getElementById('nav-services').classList.toggle('active', view === 'services');
+      document.getElementById('nav-terminals').classList.toggle('active', view === 'terminals');
       document.getElementById('nav-ports').classList.toggle('active', view === 'ports');
       document.getElementById('view-title').textContent = viewTitle(view);
+      if (view === 'terminals') loadTerminalSessions();
       render();
     }
 
     function viewTitle(view) {
       if (view === 'apps') return 'Apps';
       if (view === 'services') return 'Services';
+      if (view === 'terminals') return 'Terminals';
       return 'Ports';
     }
 
@@ -936,9 +1207,11 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       `;
       document.getElementById('apps-view').classList.toggle('hidden', currentView !== 'apps');
       document.getElementById('services-view').classList.toggle('hidden', currentView !== 'services');
+      document.getElementById('terminals-view').classList.toggle('hidden', currentView !== 'terminals');
       document.getElementById('ports-view').classList.toggle('hidden', currentView !== 'ports');
       renderApps(sortedRows);
       renderServices(sortedRows);
+      renderTerminals();
       renderPorts(sortedRows);
     }
 
@@ -1069,6 +1342,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
               <button class="${primary.className} primary-action wide" ${busy ? 'disabled' : ''} onclick="runAppPrimary('${escapeAttr(key)}')">${busy ? 'Working' : primary.label}</button>
               <button class="${secondary.className}" ${secondaryBusy ? 'disabled' : ''} onclick="runAppSecondary('${escapeAttr(key)}')">${secondaryBusy ? 'Working' : secondary.label}</button>
               <button ${restartBusy ? 'disabled' : ''} onclick="runActionByKey('${escapeAttr(key)}', '${restartAction}')">${restartBusy ? 'Working' : 'Restart'}</button>
+              <button ${remote ? 'disabled' : ''} onclick="startServiceTerminal('${escapeAttr(key)}')">Terminal</button>
             </div>
           </article>`;
       }).join('')}</div>`;
@@ -1172,10 +1446,252 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
               <button class="${primaryClass} primary-action" ${primaryBusy ? 'disabled' : ''} onclick="runActionByKey('${escapeAttr(key)}', '${primaryAction}')">${primaryBusy ? 'Working' : primaryLabel}</button>
               <button class="primary-action" ${restartBusy ? 'disabled' : ''} onclick="runActionByKey('${escapeAttr(key)}', '${restartAction}')">${restartBusy ? 'Working' : 'Restart'}</button>
               <button class="secondary" onclick="openServiceByKey('${escapeAttr(key)}')">Open</button>
+              <button ${remote ? 'disabled' : ''} onclick="startServiceTerminal('${escapeAttr(key)}')">Terminal</button>
               <button onclick="renameService('${escapeAttr(key)}')">Rename</button>
             </div>
           </article>`;
         }).join('')}</div>`;
+    }
+
+    function renderTerminals() {
+      const target = document.getElementById('terminals-view');
+      if (!target) return;
+      const active = terminalSessions.find(session => session.id === activeTerminalId) || terminalSessions[0] || null;
+      if (active && active.id !== activeTerminalId) activeTerminalId = active.id;
+      const activeBuffer = active ? (terminalBuffers[active.id] || '') : '';
+      target.innerHTML = `
+        <div class="terminal-layout">
+          <aside class="terminal-side">
+            <div class="terminal-side-actions">
+              <button class="primary" onclick="startShellTerminal()">Start Shell</button>
+              <button onclick="loadTerminalSessions()">Refresh</button>
+            </div>
+            <div class="terminal-list">
+              ${terminalSessions.length ? terminalSessions.map(session => `
+                <button class="terminal-item ${session.id === activeTerminalId ? 'active' : ''}" onclick="selectTerminal('${escapeAttr(session.id)}')">
+                  <strong>${escapeHtml(session.title || session.id)}</strong>
+                  <span>${escapeHtml(session.status || 'unknown')} ${session.service_id ? '- ' + escapeHtml(session.service_id) : ''}</span>
+                </button>
+              `).join('') : '<div class="empty">No terminal sessions.</div>'}
+            </div>
+          </aside>
+          ${active ? `
+            <section class="terminal-panel">
+              <div class="terminal-bar">
+                <strong>${escapeHtml(active.title || active.id)}</strong>
+                ${chip(active.status || 'unknown', active.status === 'running' ? 'ok' : 'muted')}
+                ${active.service_id ? chip(active.service_id, 'muted') : chip('shell', 'muted')}
+                <span class="spacer"></span>
+                <button onclick="sendTerminalControl('ctrl-c')">Ctrl-C</button>
+                <button onclick="resizeActiveTerminal()">Resize</button>
+                <button class="warn" onclick="stopActiveTerminal()">Stop</button>
+              </div>
+              <pre id="terminal-output" class="terminal-output">${escapeHtml(cleanTerminalText(activeBuffer))}</pre>
+              <div class="terminal-input-row">
+                <input id="terminal-line" autocomplete="off" spellcheck="false" onkeydown="terminalLineKeydown(event)" placeholder="$">
+                <button class="primary" onclick="sendTerminalLine()">Send</button>
+                <button onclick="sendTerminalControl('ctrl-d')">EOF</button>
+              </div>
+            </section>
+          ` : '<div class="terminal-empty">No active terminal.</div>'}
+        </div>`;
+      scrollTerminalToBottom();
+    }
+
+    async function loadTerminalSessions() {
+      try {
+        const result = await terminalRequest('sessions');
+        terminalSessions = Array.isArray(result.sessions) ? result.sessions : [];
+        if (!activeTerminalId && terminalSessions.length) activeTerminalId = terminalSessions[0].id;
+        for (const session of terminalSessions) {
+          if (!(session.id in terminalBuffers)) terminalBuffers[session.id] = '';
+        }
+        render();
+        ensureTerminalPoll();
+      } catch (err) {
+        showToast('Terminal refresh failed: ' + err);
+      }
+    }
+
+    async function startShellTerminal() {
+      try {
+        const size = terminalSize();
+        const result = await terminalRequest('start', size);
+        if (!result.session) throw new Error('missing session');
+        activeTerminalId = result.session.id;
+        terminalBuffers[activeTerminalId] = '';
+        delete terminalAfterSeq[activeTerminalId];
+        await loadTerminalSessions();
+        setView('terminals');
+        focusTerminalInput();
+      } catch (err) {
+        showToast('Start terminal failed: ' + err);
+      }
+    }
+
+    async function startServiceTerminal(key) {
+      const row = rowByKey(key);
+      if (!row) return;
+      if (isRemote(row)) {
+        showToast('Remote embedded terminals are disabled in this MVP');
+        return;
+      }
+      try {
+        const size = terminalSize();
+        const result = await terminalRequest('start', { ...size, service_id: row.id });
+        if (!result.session) throw new Error('missing session');
+        activeTerminalId = result.session.id;
+        terminalBuffers[activeTerminalId] = '';
+        delete terminalAfterSeq[activeTerminalId];
+        await loadTerminalSessions();
+        setView('terminals');
+        focusTerminalInput();
+      } catch (err) {
+        showToast('Start service terminal failed: ' + err);
+      }
+    }
+
+    function selectTerminal(id) {
+      activeTerminalId = id;
+      renderTerminals();
+      ensureTerminalPoll();
+      pollActiveTerminal();
+    }
+
+    async function pollActiveTerminal() {
+      if (!activeTerminalId) return;
+      try {
+        const params = { session: activeTerminalId };
+        if (terminalAfterSeq[activeTerminalId] !== undefined) {
+          params.after = String(terminalAfterSeq[activeTerminalId]);
+        }
+        const result = await terminalRequest('read', params);
+        const read = result.read;
+        if (!read || !read.session) return;
+        upsertTerminalSession(read.session);
+        for (const chunk of read.chunks || []) {
+          terminalAfterSeq[activeTerminalId] = chunk.seq;
+          terminalBuffers[activeTerminalId] = (terminalBuffers[activeTerminalId] || '') + String(chunk.text || '');
+        }
+        trimTerminalBuffer(activeTerminalId);
+        if (currentView === 'terminals') {
+          renderTerminals();
+        }
+      } catch (_err) {
+      }
+    }
+
+    function ensureTerminalPoll() {
+      if (terminalPollTimer) return;
+      terminalPollTimer = setInterval(() => {
+        if (activeTerminalId) pollActiveTerminal();
+      }, 450);
+    }
+
+    async function sendTerminalLine() {
+      const input = document.getElementById('terminal-line');
+      if (!input || !activeTerminalId) return;
+      const value = input.value;
+      input.value = '';
+      await sendTerminalData(value + '\r');
+      focusTerminalInput();
+    }
+
+    function terminalLineKeydown(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        sendTerminalLine();
+      } else if (event.key === 'c' && event.ctrlKey) {
+        event.preventDefault();
+        sendTerminalControl('ctrl-c');
+      } else if (event.key === 'd' && event.ctrlKey) {
+        event.preventDefault();
+        sendTerminalControl('ctrl-d');
+      }
+    }
+
+    async function sendTerminalControl(kind) {
+      if (kind === 'ctrl-c') await sendTerminalData('\x03');
+      if (kind === 'ctrl-d') await sendTerminalData('\x04');
+    }
+
+    async function sendTerminalData(data) {
+      if (!activeTerminalId) return;
+      try {
+        await terminalRequest('input', { session: activeTerminalId, data });
+        await pollActiveTerminal();
+      } catch (err) {
+        showToast('Terminal input failed: ' + err);
+      }
+    }
+
+    async function resizeActiveTerminal() {
+      if (!activeTerminalId) return;
+      try {
+        const result = await terminalRequest('resize', { session: activeTerminalId, ...terminalSize() });
+        if (result.session) upsertTerminalSession(result.session);
+        showToast('Terminal resized');
+      } catch (err) {
+        showToast('Terminal resize failed: ' + err);
+      }
+    }
+
+    async function stopActiveTerminal() {
+      if (!activeTerminalId) return;
+      try {
+        const result = await terminalRequest('stop', { session: activeTerminalId });
+        if (result.session) upsertTerminalSession(result.session);
+        await pollActiveTerminal();
+        renderTerminals();
+      } catch (err) {
+        showToast('Terminal stop failed: ' + err);
+      }
+    }
+
+    async function terminalRequest(action, params = {}) {
+      const query = new URLSearchParams(params);
+      const response = await fetch('/api/terminal/' + action + '?' + query.toString(), authOptions({ method: 'POST', cache: 'no-store' }));
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.message || 'failed');
+      return result;
+    }
+
+    function upsertTerminalSession(session) {
+      const index = terminalSessions.findIndex(candidate => candidate.id === session.id);
+      if (index >= 0) terminalSessions[index] = session;
+      else terminalSessions.push(session);
+    }
+
+    function terminalSize() {
+      const output = document.getElementById('terminal-output');
+      const width = output?.clientWidth || 900;
+      const height = output?.clientHeight || 460;
+      return {
+        cols: String(Math.max(40, Math.min(180, Math.floor(width / 8)))),
+        rows: String(Math.max(10, Math.min(80, Math.floor(height / 18)))),
+      };
+    }
+
+    function trimTerminalBuffer(id) {
+      const text = terminalBuffers[id] || '';
+      if (text.length > 180000) terminalBuffers[id] = text.slice(text.length - 120000);
+    }
+
+    function cleanTerminalText(text) {
+      return String(text || '')
+        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+        .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+    }
+
+    function scrollTerminalToBottom() {
+      const output = document.getElementById('terminal-output');
+      if (output) output.scrollTop = output.scrollHeight;
+    }
+
+    function focusTerminalInput() {
+      setTimeout(() => document.getElementById('terminal-line')?.focus(), 50);
     }
 
     function renderPorts(rows) {

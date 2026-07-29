@@ -9,5 +9,6 @@ pub mod process;
 pub mod registry;
 pub mod state;
 pub mod status;
+pub mod terminal;
 pub mod time;
 pub mod tray;
