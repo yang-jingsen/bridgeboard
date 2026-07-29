@@ -8,7 +8,10 @@
   without opening the system browser. The result includes the owner/source
   config path so TethysUNE can audit legacy handoff records such as Denia Score
   Annotator without mutating them. Existing `bridgeboard open` behavior is
-  preserved by opening the prepared URL externally.
+  preserved by opening the prepared URL externally. Validation: `cargo fmt
+  --check`, `cargo test`, `cargo check --bins`, and Windows target check passed;
+  refreshed CLI binaries were deployed to tethys and eva-02; Denia prepared on
+  both hosts and `http://127.0.0.1:24321/` returned HTTP 200 from tethys.
 - 2026-07-29: Renamed the TethysUNE branch desktop/dashboard display surface
   from Bridgeboard to TethysUNE. The CLI binary and agent handoff command remain
   `bridgeboard` for compatibility with existing services and prompts.

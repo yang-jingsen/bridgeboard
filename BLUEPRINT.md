@@ -227,11 +227,11 @@ service lifecycle, SSH local-forward setup, and legacy handoff records.
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| Add a JSON `prepare-open` CLI/core contract | In Progress | Must prepare on-demand services and peer tunnels without opening a browser. |
-| Include owner/source config path in the result | In Progress | Required for reversible Denia migration auditing. |
-| Document the Denia Score Annotator migration path | In Progress | Preserve eva-02 handoff YAML and registry until validated. |
-| Validate Linux and Windows CLI surfaces | Pending | Include tethys Denia smoke and Windows target check. |
-| Deploy refreshed CLI to eva-02 for runtime validation | Pending | Replace only after tests pass; preserve service YAML/state. |
+| Add a JSON `prepare-open` CLI/core contract | Completed | Prepares on-demand services and peer tunnels without opening a browser. |
+| Include owner/source config path in the result | Completed | Required for reversible Denia migration auditing. |
+| Document the Denia Score Annotator migration path | Completed | Preserves eva-02 handoff YAML and registry until validated. |
+| Validate Linux and Windows CLI surfaces | Completed | Includes tethys Denia smoke and Windows target check. |
+| Deploy refreshed CLI to eva-02 for runtime validation | Completed | Replaced CLI after tests; preserved service YAML/state. |
 
 Validation:
 
@@ -240,3 +240,5 @@ Validation:
 - `cargo check --bins`
 - `cargo check --target x86_64-pc-windows-gnu --bin bridgeboard`
 - `bridgeboard prepare-open --id denia-score-annotator --owner-host eva-02 --source-machine eva-02 --local-port 24321 --target internal`
+- eva-02 `bridgeboard.exe prepare-open --id denia-score-annotator --owner-host eva-02 --source-machine eva-02 --local-port 24321 --target internal`
+- `curl -I --max-time 5 http://127.0.0.1:24321/`
