@@ -1,5 +1,8 @@
 # Bridgeboard Changelog
 
+- 2026-07-29: Renamed the TethysUNE branch desktop/dashboard display surface
+  from Bridgeboard to TethysUNE. The CLI binary and agent handoff command remain
+  `bridgeboard` for compatibility with existing services and prompts.
 - 2026-07-29: Refined the TethysUNE dashboard palette toward a blue/black/white
   Shorekeeper-inspired direction and added a separate read-only `Devices`
   page. The page currently summarizes local/peer/owner machines from the

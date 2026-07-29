@@ -651,7 +651,7 @@ fn cmd_serve(env: &BridgeEnv, args: ServeArgs) -> Result<()> {
         );
     }
     let addr = format!("{}:{}", args.host, args.port);
-    println!("Bridgeboard dashboard: http://{addr}/");
+    println!("TethysUNE dashboard: http://{addr}/");
     dashboard::serve(env.clone(), &args.host, args.port, !args.no_peers)
 }
 

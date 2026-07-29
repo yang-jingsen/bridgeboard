@@ -716,7 +716,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bridgeboard</title>
+  <title>TethysUNE</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -1131,7 +1131,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       <div class="brand">
         <div class="mark"></div>
         <div>
-          <h1>Bridgeboard</h1>
+          <h1>TethysUNE</h1>
           <div class="machine" id="machine">loading</div>
         </div>
       </div>

@@ -293,7 +293,7 @@ bridgeboard-tray
 bridgeboard-tray.exe
 ```
 
-It owns the local dashboard server on `127.0.0.1:24000`, starts local `autostart` services, runs the lightweight supervisor loop, and opens a small native WebView control window instead of launching a browser or command console. The tray menu includes `Open Bridgeboard`, `Open Web Dashboard`, `Ports`, `Doctor`, and `Quit`. Left-clicking the tray icon opens Bridgeboard.
+On the `tethysune/terminal-sessions` branch the user-facing desktop shell is named TethysUNE, while the CLI command and handoff protocol remain `bridgeboard` for compatibility. It owns the local dashboard server on `127.0.0.1:24000`, starts local `autostart` services, runs the lightweight supervisor loop, and opens a small native WebView control window instead of launching a browser or command console. The tray menu includes `Open TethysUNE`, `Open Web Dashboard`, `Ports`, `Doctor`, and `Quit`. Left-clicking the tray icon opens TethysUNE.
 
 Build `bridgeboard-tray` from `apps/bridgeboard-tauri`; the root crate's
 `bridgeboard-win32-tray` binary is a legacy Windows fallback and intentionally
