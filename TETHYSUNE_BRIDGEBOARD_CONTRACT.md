@@ -81,6 +81,18 @@ short UI timeout. A local row whose runtime was intentionally skipped reports
 `runtime_status: "not-checked"`. Use `prepare-open` or `status <id> --json` for
 the selected service when exact runtime detail is required.
 
+Latency/SLA guidance:
+
+- `ports --json --peers --no-runtime` is the intended app-panel list path and
+  should stay under the TethysUNE provider timeout; on eva-02 it measured
+  about 4.75s with peer lookup and 0.03s without peer lookup.
+- Plain `ports --json` is an operator/status path. On Windows owners with many
+  services it may perform slow per-service PID checks and is not the UI list
+  SLA path.
+- For Denia today, list with `--no-runtime`, then call `prepare-open` for the
+  selected row. `prepare-open` returns live owner runtime when called on eva-02
+  and a prepared local tunnel URL when called from tethys.
+
 How to identify it from tethys:
 
 ```bash

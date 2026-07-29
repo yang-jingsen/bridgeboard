@@ -4,6 +4,9 @@
   listing on Windows owners. The default `ports` behavior still performs local
   runtime/PID checks, while `--no-runtime` exports local rows without
   per-service probes and marks skipped local runtime as `not-checked`.
+  Validation: eva-02 `ports --json --no-runtime` measured 0.03s, and
+  `ports --json --peers --no-runtime` measured 4.75s, below TethysUNE's 20s
+  provider timeout.
 - 2026-07-30: Added the `prepare-open` JSON integration command for
   TethysUNE-style native shells. It accepts a stable service reference
   (`--id`, optional `--owner-host`, `--source-machine`, `--local-port`, and

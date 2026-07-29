@@ -241,6 +241,7 @@ Validation:
 - `cargo check --bins`
 - `cargo check --target x86_64-pc-windows-gnu --bin bridgeboard`
 - `bridgeboard ports --json --peers --no-runtime`
+- eva-02 `bridgeboard.exe ports --json --peers --no-runtime`
 - `bridgeboard prepare-open --id denia-score-annotator --owner-host eva-02 --source-machine eva-02 --local-port 24321 --target internal`
 - eva-02 `bridgeboard.exe prepare-open --id denia-score-annotator --owner-host eva-02 --source-machine eva-02 --local-port 24321 --target internal`
 - `curl -I --max-time 5 http://127.0.0.1:24321/`
