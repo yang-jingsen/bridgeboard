@@ -15,6 +15,7 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
 use std::time::Duration;
+use url::Url;
 
 #[derive(Clone)]
 pub struct BridgeEnv {
@@ -43,6 +44,35 @@ pub struct PortRow {
     pub network_url: Option<String>,
     pub pid_source: Option<String>,
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PrepareOpenResult {
+    pub target: String,
+    pub service_ref: PrepareOpenServiceRef,
+    pub source_config_path: String,
+    pub title: String,
+    pub url: String,
+    pub origin: Option<String>,
+    pub local_machine_id: String,
+    pub service_mode: String,
+    pub tunnel_modes: String,
+    pub startup_policy: String,
+    pub restart_policy: String,
+    pub runtime_status: String,
+    pub direct_open: bool,
+    pub local_port: Option<u16>,
+    pub network_url: Option<String>,
+    pub actions: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PrepareOpenServiceRef {
+    pub id: String,
+    pub owner_host: String,
+    pub source_machine: String,
+    pub port: u16,
 }
 
 impl BridgeEnv {
@@ -779,37 +809,217 @@ pub fn restart(env: &BridgeEnv, id: &str) -> Result<Vec<String>> {
     Ok(messages)
 }
 
-pub fn open(env: &BridgeEnv, id: &str) -> Result<String> {
+pub fn prepare_open(
+    env: &BridgeEnv,
+    id: &str,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+    local_port: Option<u16>,
+    target: &str,
+) -> Result<PrepareOpenResult> {
+    let target = normalized_prepare_open_target(target);
+    let source_targets_peer = source_machine
+        .map(|source| source != env.machine_id)
+        .unwrap_or(false);
+    if source_targets_peer {
+        return prepare_open_peer_target(env, id, owner_host, source_machine, local_port, target);
+    }
+
     let registry = Registry::load(&env.paths.registry_file)?;
-    let url = if let Some(cfg) = registry.try_get_config(id)? {
-        if cfg.service.lifecycle.startup == StartupPolicy::OnDemand {
-            let _ = up(env, id)?;
+    if let Some((entry, cfg)) = registry.try_get_entry_config(id)? {
+        let owner_matches = owner_host
+            .map(|owner| owner == cfg.owner_host)
+            .unwrap_or(true);
+        if owner_matches {
+            return prepare_open_config(env, &entry, &cfg, target);
         }
-        open_url(&cfg)
-    } else if let Some((peer_name, service)) = find_peer_service(env, id)? {
-        if service.lifecycle.startup == StartupPolicy::OnDemand {
-            let owner = peer_service_owner(env, &peer_name, &service);
-            let _ = run_remote_up(env, owner, id)?;
+        if source_machine
+            .map(|source| source == env.machine_id)
+            .unwrap_or(false)
+        {
+            bail!(
+                "service `{id}` on local source is owned by `{}`, not `{}`",
+                cfg.owner_host,
+                owner_host.unwrap_or_default()
+            );
         }
-        let mut local_tunnel = false;
-        if local_forward_allowed(env, &service.tunnel_modes) {
-            if wait_for_reverse_forward_listener(&service.tunnel_modes, service.port).is_none() {
-                let mut state = State::load(&env.paths.state_file)?;
-                let _ = start_peer_service_tunnel(env, &mut state, &peer_name, &service, None)?;
-                state.save(&env.paths.state_file)?;
-            }
-            local_tunnel = true;
-        }
-        peer_open_url(&service, local_tunnel)
-    } else {
-        bail!("service `{id}` is not registered locally and was not found on configured peers");
-    };
-    webbrowser::open(&url).with_context(|| format!("open {url}"))?;
-    Ok(url)
+    } else if source_machine
+        .map(|source| source == env.machine_id)
+        .unwrap_or(false)
+    {
+        bail!(
+            "service `{id}` is not registered on local source `{}`",
+            env.machine_id
+        );
+    }
+
+    prepare_open_peer_target(env, id, owner_host, source_machine, local_port, target)
 }
 
-fn peer_open_url(service: &ServiceExport, local_tunnel: bool) -> String {
-    peer_open_url_with_local_port(service, local_tunnel, None)
+fn prepare_open_config(
+    env: &BridgeEnv,
+    entry: &RegistryEntry,
+    cfg: &BridgeConfig,
+    target: &str,
+) -> Result<PrepareOpenResult> {
+    let mut messages = Vec::new();
+    if cfg.service.lifecycle.startup == StartupPolicy::OnDemand {
+        messages.extend(up(env, &cfg.id)?);
+    }
+    let url = prepare_open_config_url(cfg, target);
+    let state = State::load(&env.paths.state_file)?;
+    let status_row = crate::status::row_for(cfg, &env.machine_id, &state);
+    let (actions, warnings) = split_action_messages(messages);
+    Ok(PrepareOpenResult {
+        target: target.to_string(),
+        service_ref: PrepareOpenServiceRef {
+            id: cfg.id.clone(),
+            owner_host: cfg.owner_host.clone(),
+            source_machine: env.machine_id.clone(),
+            port: cfg.port,
+        },
+        source_config_path: entry.config_path.display().to_string(),
+        title: cfg.title.clone(),
+        url: url.clone(),
+        origin: origin_for_url(&url),
+        local_machine_id: env.machine_id.clone(),
+        service_mode: service_mode_label(cfg.service.mode).into(),
+        tunnel_modes: tunnel_modes_label_for_peer(
+            env,
+            cfg.owner_host != env.machine_id,
+            &cfg.tunnel.modes,
+        ),
+        startup_policy: startup_policy_label(cfg.service.lifecycle.startup).into(),
+        restart_policy: restart_policy_label(cfg.service.lifecycle.restart).into(),
+        runtime_status: status_row.service,
+        direct_open: true,
+        local_port: None,
+        network_url: cfg.network_url.clone(),
+        actions,
+        warnings,
+    })
+}
+
+fn prepare_open_peer_target(
+    env: &BridgeEnv,
+    id: &str,
+    owner_host: Option<&str>,
+    source_machine: Option<&str>,
+    local_port: Option<u16>,
+    target: &str,
+) -> Result<PrepareOpenResult> {
+    let Some((peer_name, service)) = find_peer_service_target(env, id, owner_host, source_machine)?
+    else {
+        bail!("service `{id}` was not found on the requested peer target");
+    };
+    let mut messages = Vec::new();
+    let local_forward = local_forward_allowed(env, &service.tunnel_modes);
+    if service.lifecycle.startup == StartupPolicy::OnDemand {
+        let owner = peer_service_owner(env, &peer_name, &service);
+        messages.extend(run_remote_up(env, owner, id)?);
+    }
+    if local_forward {
+        let mut state = State::load(&env.paths.state_file)?;
+        start_peer_service_tunnel_or_reuse_reverse(
+            env,
+            &mut state,
+            &peer_name,
+            &service,
+            local_port,
+            &mut messages,
+        )?;
+        state.save(&env.paths.state_file)?;
+    }
+    let url = peer_open_url_with_local_port(&service, local_forward, local_port);
+    let (actions, warnings) = split_action_messages(messages);
+    Ok(PrepareOpenResult {
+        target: target.to_string(),
+        service_ref: PrepareOpenServiceRef {
+            id: service.id.clone(),
+            owner_host: service.owner_host.clone(),
+            source_machine: peer_name,
+            port: service.port,
+        },
+        source_config_path: service.config_path.display().to_string(),
+        title: service.title.clone(),
+        url: url.clone(),
+        origin: origin_for_url(&url),
+        local_machine_id: env.machine_id.clone(),
+        service_mode: service_mode_label(service.service_mode).into(),
+        tunnel_modes: tunnel_modes_label_for_peer(env, true, &service.tunnel_modes),
+        startup_policy: startup_policy_label(service.lifecycle.startup).into(),
+        restart_policy: restart_policy_label(service.lifecycle.restart).into(),
+        runtime_status: service
+            .runtime_status
+            .clone()
+            .unwrap_or_else(|| "peer-export".into()),
+        direct_open: true,
+        local_port: if local_forward {
+            Some(local_port.unwrap_or(service.port))
+        } else {
+            None
+        },
+        network_url: service.network_url.clone(),
+        actions,
+        warnings,
+    })
+}
+
+pub fn open(env: &BridgeEnv, id: &str) -> Result<String> {
+    let prepared = prepare_open(env, id, None, None, None, "external")?;
+    webbrowser::open(&prepared.url).with_context(|| format!("open {}", prepared.url))?;
+    Ok(prepared.url)
+}
+
+fn normalized_prepare_open_target(target: &str) -> &str {
+    match target {
+        "external" => "external",
+        _ => "internal",
+    }
+}
+
+fn prepare_open_config_url(cfg: &BridgeConfig, target: &str) -> String {
+    if target == "internal" {
+        let raw = cfg
+            .local_url
+            .clone()
+            .or_else(|| cfg.open_url.clone())
+            .or_else(|| cfg.network_url.clone())
+            .unwrap_or_else(|| format!("http://127.0.0.1:{}/", cfg.port));
+        return normalize_embedded_loopback_url(&raw);
+    }
+    open_url(cfg)
+}
+
+fn normalize_embedded_loopback_url(raw_url: &str) -> String {
+    let Ok(mut url) = Url::parse(raw_url) else {
+        return raw_url.to_string();
+    };
+    if matches!(url.host_str(), Some("0.0.0.0") | Some("::"))
+        && url.set_host(Some("127.0.0.1")).is_ok()
+    {
+        return url.to_string();
+    }
+    raw_url.to_string()
+}
+
+fn split_action_messages(messages: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let mut actions = Vec::new();
+    let mut warnings = Vec::new();
+    for message in messages {
+        if message.to_lowercase().contains("warning") {
+            warnings.push(message);
+        } else {
+            actions.push(message);
+        }
+    }
+    (actions, warnings)
+}
+
+fn origin_for_url(raw_url: &str) -> Option<String> {
+    Url::parse(raw_url)
+        .ok()
+        .map(|url| url.origin().ascii_serialization())
 }
 
 fn peer_open_url_with_local_port(
@@ -1307,6 +1517,64 @@ fn truncate(value: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ServiceConfig, TunnelConfig};
+    use crate::paths::AppPaths;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn external_test_config() -> BridgeConfig {
+        BridgeConfig {
+            schema: "portal-bridge.v1".into(),
+            id: "web-portal".into(),
+            title: "Web Portal".into(),
+            owner_host: "workstation".into(),
+            port: 24991,
+            service: ServiceConfig {
+                mode: ServiceMode::External,
+                lifecycle: LifecycleConfig::default(),
+                cwd: None,
+                command: Vec::new(),
+                start_command: None,
+                detach: None,
+                stop_command: None,
+                restart_command: None,
+                task_name: None,
+                pid_source: None,
+                pid_port: None,
+                pid_file: None,
+                pid: None,
+                log_file: None,
+                health_url: None,
+                health_expect: crate::config::HealthExpectConfig::default(),
+                startup_timeout_sec: 10,
+                notes: None,
+            },
+            tunnel: TunnelConfig::default(),
+            local_url: Some("http://127.0.0.1:24991/".into()),
+            network_url: None,
+            open_url: Some("http://127.0.0.1:24991/custom".into()),
+        }
+    }
+
+    fn env_with_service(cfg: &BridgeConfig) -> (TempDir, BridgeEnv) {
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("config.yaml");
+        let registry_file = dir.path().join("registry.json");
+        let state_file = dir.path().join("state.json");
+        let service_file = dir.path().join("portal-bridge.yaml");
+        fs::write(&config_file, "machine_id: workstation\n").unwrap();
+        fs::write(&service_file, serde_yaml::to_string(cfg).unwrap()).unwrap();
+        let mut registry = Registry::default();
+        registry.register(service_file).unwrap();
+        registry.save(&registry_file).unwrap();
+        let env = BridgeEnv::from_paths(AppPaths {
+            config_file,
+            registry_file,
+            state_file,
+        })
+        .unwrap();
+        (dir, env)
+    }
 
     #[test]
     fn lifecycle_label_uses_config_terms() {
@@ -1336,5 +1604,70 @@ mod tests {
         assert_eq!(preferred_peer_fallback_port(24260), Some(24660));
         assert_eq!(preferred_peer_fallback_port(24308), Some(24708));
         assert_eq!(preferred_peer_fallback_port(24699), None);
+    }
+
+    #[test]
+    fn prepare_open_local_external_target_preserves_open_url_without_browser_side_effect() {
+        let cfg = external_test_config();
+        let (_dir, env) = env_with_service(&cfg);
+        let result = prepare_open(
+            &env,
+            "web-portal",
+            Some("workstation"),
+            Some("workstation"),
+            None,
+            "external",
+        )
+        .unwrap();
+
+        assert_eq!(result.target, "external");
+        assert_eq!(result.service_ref.id, "web-portal");
+        assert_eq!(result.service_ref.owner_host, "workstation");
+        assert_eq!(result.service_ref.source_machine, "workstation");
+        assert_eq!(result.service_ref.port, 24991);
+        assert!(result.source_config_path.ends_with("portal-bridge.yaml"));
+        assert_eq!(result.url, "http://127.0.0.1:24991/custom");
+        assert_eq!(result.origin.as_deref(), Some("http://127.0.0.1:24991"));
+        assert_eq!(result.actions, Vec::<String>::new());
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert!(result.direct_open);
+    }
+
+    #[test]
+    fn prepare_open_local_internal_prefers_embeddable_loopback_url() {
+        let mut cfg = external_test_config();
+        cfg.local_url = None;
+        cfg.open_url = Some("http://0.0.0.0:24991/app".into());
+        let (_dir, env) = env_with_service(&cfg);
+        let result = prepare_open(
+            &env,
+            "web-portal",
+            Some("workstation"),
+            Some("workstation"),
+            None,
+            "internal",
+        )
+        .unwrap();
+
+        assert_eq!(result.target, "internal");
+        assert_eq!(result.url, "http://127.0.0.1:24991/app");
+        assert_eq!(result.origin.as_deref(), Some("http://127.0.0.1:24991"));
+    }
+
+    #[test]
+    fn prepare_open_splits_action_and_warning_messages() {
+        let (actions, warnings) = split_action_messages(vec![
+            "remote-up app on eva-02".into(),
+            "eva-02 warning: slow SSH".into(),
+            "local tunnel 24201 -> eva-02:24201 pid 7".into(),
+        ]);
+        assert_eq!(
+            actions,
+            vec![
+                "remote-up app on eva-02".to_string(),
+                "local tunnel 24201 -> eva-02:24201 pid 7".to_string()
+            ]
+        );
+        assert_eq!(warnings, vec!["eva-02 warning: slow SSH".to_string()]);
     }
 }

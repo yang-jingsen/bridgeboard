@@ -251,11 +251,65 @@ bridgeboard stop image-review-portal
 bridgeboard restart image-review-portal
 bridgeboard rename image-review-portal --title "Image Review Portal"
 bridgeboard logs image-review-portal --lines 120
+bridgeboard prepare-open --id image-review-portal --owner-host gpu-box --source-machine gpu-box --target internal
 bridgeboard open image-review-portal
 bridgeboard startup
 bridgeboard supervise --interval 15
 bridgeboard doctor
 bridgeboard watch
+```
+
+`prepare-open` is the structured integration command for TethysUNE and other
+native shells. It performs the same preparation work that an embedded opener
+needs, such as starting an `on_demand` service and creating an SSH local
+forward for a peer service, but it does not call the system browser. Existing
+`bridgeboard open <id>` keeps its old behavior and opens the resolved URL
+externally.
+
+Stable service references should include the service id plus owner/source
+identity when the caller already has them from `ports --json --peers`:
+
+```bash
+bridgeboard prepare-open \
+  --id image-review-portal \
+  --owner-host gpu-box \
+  --source-machine gpu-box \
+  --local-port 24660 \
+  --target internal
+```
+
+`--owner-host`, `--source-machine`, and `--local-port` are optional, but a
+native shell should pass them when opening a row from a peer-aware service
+list. `--target` is `internal` or `external`; it is echoed in the JSON result
+for policy decisions, and neither value opens a browser.
+
+The JSON result is shaped for a native Web tab/workspace:
+
+```json
+{
+  "target": "internal",
+  "service_ref": {
+    "id": "image-review-portal",
+    "owner_host": "gpu-box",
+    "source_machine": "gpu-box",
+    "port": 24001
+  },
+  "source_config_path": "/home/user/.local/share/bridgeboard/handoffs/image-review-portal.yaml",
+  "title": "Image Review Portal",
+  "url": "http://127.0.0.1:24660/",
+  "origin": "http://127.0.0.1:24660",
+  "local_machine_id": "workstation",
+  "service_mode": "managed",
+  "tunnel_modes": "local",
+  "startup_policy": "on_demand",
+  "restart_policy": "on_failure",
+  "runtime_status": "running:12345",
+  "direct_open": true,
+  "local_port": 24660,
+  "network_url": null,
+  "actions": ["local tunnel 24660 -> gpu-box:24001 pid 777"],
+  "warnings": []
+}
 ```
 
 `ports --peers` is the quickest operator view: it shows owner-scoped reserved ports, owner host, source machine, `managed` vs `external`, tunnel modes, and runtime status. `up <id>` can start a local tunnel from a peer registry entry even when the YAML file exists only on that peer, as long as the peer is configured, reachable by SSH, and the service enables `local_forward`. If a local record has the same id and shadows the peer record, use `up --peer <peer> <id>` or `up --host <peer> <id>` to explicitly tunnel the peer export. By default the local listener uses the owner's fixed service port. Add `--local-port <port>` only when that port is already occupied locally or you intentionally want a distinct local tunnel port; Bridgeboard still forwards to the owner's service port. If you set `defaults.assume_local_forward_for_peers: true`, Bridgeboard treats peer records with empty `tunnel.modes` as locally tunnelable and displays them as `local(default)`.

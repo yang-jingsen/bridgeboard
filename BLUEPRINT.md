@@ -217,3 +217,26 @@ Validation:
 - `cargo fmt --check`
 - `cargo test`
 - `cargo check --bins`
+
+## Current Stage 10 TethysUNE Open Contract
+
+Goal: expose Bridgeboard as a side-effect-controlled service preparation layer
+for the TethysUNE shell. TethysUNE should be able to open local and peer web
+services inside an embedded workspace while Bridgeboard keeps ownership of
+service lifecycle, SSH local-forward setup, and legacy handoff records.
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| Add a JSON `prepare-open` CLI/core contract | In Progress | Must prepare on-demand services and peer tunnels without opening a browser. |
+| Include owner/source config path in the result | In Progress | Required for reversible Denia migration auditing. |
+| Document the Denia Score Annotator migration path | In Progress | Preserve eva-02 handoff YAML and registry until validated. |
+| Validate Linux and Windows CLI surfaces | Pending | Include tethys Denia smoke and Windows target check. |
+| Deploy refreshed CLI to eva-02 for runtime validation | Pending | Replace only after tests pass; preserve service YAML/state. |
+
+Validation:
+
+- `cargo fmt --check`
+- `cargo test`
+- `cargo check --bins`
+- `cargo check --target x86_64-pc-windows-gnu --bin bridgeboard`
+- `bridgeboard prepare-open --id denia-score-annotator --owner-host eva-02 --source-machine eva-02 --local-port 24321 --target internal`

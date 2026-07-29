@@ -1,5 +1,14 @@
 # Bridgeboard Changelog
 
+- 2026-07-30: Added the `prepare-open` JSON integration command for
+  TethysUNE-style native shells. It accepts a stable service reference
+  (`--id`, optional `--owner-host`, `--source-machine`, `--local-port`, and
+  `--target internal|external`), performs on-demand service and peer tunnel
+  preparation, and returns the resolved URL plus action/warning metadata
+  without opening the system browser. The result includes the owner/source
+  config path so TethysUNE can audit legacy handoff records such as Denia Score
+  Annotator without mutating them. Existing `bridgeboard open` behavior is
+  preserved by opening the prepared URL externally.
 - 2026-07-29: Renamed the TethysUNE branch desktop/dashboard display surface
   from Bridgeboard to TethysUNE. The CLI binary and agent handoff command remain
   `bridgeboard` for compatibility with existing services and prompts.

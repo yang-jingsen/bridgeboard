@@ -51,6 +51,8 @@ enum Command {
     Restart(IdArgs),
     Rename(RenameArgs),
     Logs(LogsArgs),
+    #[command(name = "prepare-open")]
+    PrepareOpen(PrepareOpenArgs),
     Open(IdArgs),
     Doctor,
     Serve(ServeArgs),
@@ -216,6 +218,35 @@ struct LogsArgs {
 }
 
 #[derive(Args)]
+struct PrepareOpenArgs {
+    #[arg(long)]
+    id: String,
+    #[arg(long)]
+    owner_host: Option<String>,
+    #[arg(long)]
+    source_machine: Option<String>,
+    #[arg(long)]
+    local_port: Option<u16>,
+    #[arg(long, value_enum, default_value_t = PrepareOpenTarget::Internal)]
+    target: PrepareOpenTarget,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum PrepareOpenTarget {
+    Internal,
+    External,
+}
+
+impl PrepareOpenTarget {
+    fn as_str(self) -> &'static str {
+        match self {
+            PrepareOpenTarget::Internal => "internal",
+            PrepareOpenTarget::External => "external",
+        }
+    }
+}
+
+#[derive(Args)]
 struct ServeArgs {
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
@@ -299,6 +330,7 @@ fn dispatch(env: BridgeEnv, command: Command) -> Result<()> {
         Command::Restart(args) => print_lines(core::restart(&env, &args.id)?),
         Command::Rename(args) => print_lines(core::rename_title(&env, &args.id, &args.title)?),
         Command::Logs(args) => cmd_logs(&env, args),
+        Command::PrepareOpen(args) => cmd_prepare_open(&env, args),
         Command::Open(args) => {
             println!("{}", core::open(&env, &args.id)?);
             Ok(())
@@ -622,6 +654,19 @@ fn cmd_registry_export(env: &BridgeEnv, args: OutputArgs) -> Result<()> {
 
 fn cmd_logs(env: &BridgeEnv, args: LogsArgs) -> Result<()> {
     println!("{}", core::log_tail(env, &args.id, args.lines)?);
+    Ok(())
+}
+
+fn cmd_prepare_open(env: &BridgeEnv, args: PrepareOpenArgs) -> Result<()> {
+    let result = core::prepare_open(
+        env,
+        &args.id,
+        args.owner_host.as_deref(),
+        args.source_machine.as_deref(),
+        args.local_port,
+        args.target.as_str(),
+    )?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
 
