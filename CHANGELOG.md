@@ -1,5 +1,11 @@
 # Bridgeboard Changelog
 
+- 2026-07-29: Refined the TethysUNE dashboard palette toward a blue/black/white
+  Shorekeeper-inspired direction and added a separate read-only `Devices`
+  page. The page currently summarizes local/peer/owner machines from the
+  service registry; TODO: turn it into the configuration surface for local and
+  peer display names, SSH aliases, dashboard endpoints, trust policy, and
+  local-forward defaults.
 - 2026-07-29: Started the TethysUNE terminal-sessions branch. The dashboard
   now has a `Terminals` view backed by `portable-pty`, so Linux shells and the
   Windows ConPTY path share one internal API. The MVP exposes token-protected

@@ -721,19 +721,19 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     :root {
       color-scheme: light dark;
       font-family: Inter, Segoe UI, system-ui, sans-serif;
-      --bg: #f4f6f7;
+      --bg: #f3f7fb;
       --panel: #ffffff;
-      --panel-2: #f9fbfc;
-      --line: #d8e0e6;
-      --text: #18212b;
-      --muted: #66727f;
-      --soft: #eef3f5;
-      --accent: #0f766e;
-      --accent-2: #2563eb;
-      --ok: #15803d;
-      --warn: #b45c08;
+      --panel-2: #f7fbff;
+      --line: #d5e2f0;
+      --text: #111827;
+      --muted: #61758e;
+      --soft: #edf5ff;
+      --accent: #2563eb;
+      --accent-2: #5dbdf7;
+      --ok: #1d4ed8;
+      --warn: #9a5a00;
       --bad: #dc2626;
-      --remote: #0e7490;
+      --remote: #0369a1;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
@@ -750,7 +750,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       min-height: 32px;
     }
     button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-    button.secondary { background: #eaf3ff; color: #17458f; border-color: #b9d4fb; }
+    button.secondary { background: #eaf3ff; color: #163f82; border-color: #b9d4fb; }
     button.warn { background: #fff7ed; color: #8a3d00; border-color: #f0b26d; }
     button:disabled { opacity: .55; cursor: default; }
     input {
@@ -763,7 +763,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       font-size: 13px;
       outline: none;
     }
-    input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(15,118,110,.14); }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37,99,235,.14); }
     select {
       border: 1px solid #a9b4be;
       background: var(--panel);
@@ -800,12 +800,12 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       min-height: 0;
     }
     .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; }
-    .mark { width: 30px; height: 30px; border-radius: 7px; background: linear-gradient(135deg, #0f766e, #2563eb); }
+    .mark { width: 30px; height: 30px; border-radius: 7px; background: linear-gradient(135deg, #07111f, #2563eb 58%, #d9f2ff); }
     h1 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: 0; }
     .machine { color: var(--muted); font-size: 12px; margin-top: 2px; }
     .nav { display: grid; gap: 4px; }
     .nav button { text-align: left; border: 0; background: transparent; padding: 9px 10px; color: var(--muted); }
-    .nav button.active { background: #e8f2f1; color: #0f4f49; font-weight: 650; }
+    .nav button.active { background: #eaf3ff; color: #173f80; font-weight: 650; }
     .sidebar-footer { margin-top: auto; display: grid; gap: 8px; }
     .content { min-width: 0; min-height: 0; padding: 18px 22px 24px; display: flex; flex-direction: column; }
     .topbar { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
@@ -843,9 +843,9 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       width: 42px;
       height: 42px;
       border-radius: 8px;
-      background: #e6f1ef;
-      color: #0f4f49;
-      border: 1px solid #c1d8d3;
+      background: #eaf5ff;
+      color: #17458f;
+      border: 1px solid #b8d9ff;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -861,6 +861,55 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     .app-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .app-actions .wide { grid-column: 1 / -1; }
     .app-actions button { width: 100%; }
+    .device-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .device-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 182px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 12px;
+    }
+    .device-head { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 10px; align-items: center; }
+    .device-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background: #07111f;
+      color: #d9f2ff;
+      border: 1px solid #2b5fa8;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+    .device-name { min-width: 0; }
+    .device-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .device-name span { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .device-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .device-stat {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 8px;
+      padding: 8px;
+      min-width: 0;
+    }
+    .device-stat span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+    .device-stat strong { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .device-todo { color: var(--muted); font-size: 12px; line-height: 1.4; }
     .service-list { display: grid; gap: 8px; }
     .service-row {
       background: var(--panel);
@@ -906,13 +955,13 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       font-weight: 750;
       line-height: 1;
     }
-    .state-badge.ok { background: #dff5e8; color: var(--ok); }
+    .state-badge.ok { background: #e5f1ff; color: var(--ok); }
     .state-badge.warn { background: #fff0cf; color: var(--warn); }
     .state-badge.bad { background: #fee2e2; color: var(--bad); }
     .state-badge.muted { background: var(--soft); color: var(--muted); }
     .chips { display: flex; gap: 6px; flex-wrap: wrap; align-content: center; align-items: center; }
     .chip { border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 650; background: var(--soft); color: #46515c; }
-    .chip.ok { background: #e8f7ee; color: var(--ok); }
+    .chip.ok { background: #e5f1ff; color: var(--ok); }
     .chip.warn { background: #fff2dc; color: var(--warn); }
     .chip.bad { background: #fee2e2; color: var(--bad); }
     .chip.remote { background: #e1f5f8; color: var(--remote); }
@@ -969,7 +1018,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       gap: 3px;
       min-height: 46px;
     }
-    .terminal-item.active { border-color: var(--accent); background: #e8f2f1; }
+    .terminal-item.active { border-color: var(--accent); background: #eaf3ff; }
     .terminal-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .terminal-item span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .terminal-panel {
@@ -997,7 +1046,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       padding: 13px;
       min-height: 0;
       overflow: auto;
-      color: #d7efe7;
+      color: #dbeafe;
       background: #070b0f;
       font: 13px/1.45 Consolas, "Cascadia Mono", "SFMono-Regular", monospace;
       white-space: pre-wrap;
@@ -1013,7 +1062,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     }
     .terminal-input-row input {
       background: #071017;
-      color: #d7efe7;
+      color: #dbeafe;
       border-color: #2d404b;
       font-family: Consolas, "Cascadia Mono", "SFMono-Regular", monospace;
     }
@@ -1049,26 +1098,29 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #11161a; --panel: #171d22; --panel-2: #1d252b; --line: #303a42;
-        --text: #e6eaee; --muted: #a6b0ba; --soft: #232d34;
+        --bg: #070b12; --panel: #0d1420; --panel-2: #121c2b; --line: #263550;
+        --text: #f4f8ff; --muted: #9fb5cc; --soft: #17243a;
       }
-      .sidebar { background: #141a1f; }
-      button { background: #1c242a; color: var(--text); border-color: #3a4650; }
-      button.secondary { background: #17243a; color: #bcd5ff; border-color: #2f4b75; }
-      button.warn { background: #2a1f17; color: #ffd6a8; border-color: #9a5a20; }
-      select { background: #1c242a; color: var(--text); border-color: #3a4650; }
-      .nav button.active { background: #15302d; color: #a8f0e7; }
-      th, td { border-bottom-color: #303a42; }
-      .state-badge.ok { background: #143323; color: #86efac; }
+      .sidebar { background: #090f18; }
+      button { background: #111c2b; color: var(--text); border-color: #2b3d5a; }
+      button.secondary { background: #10213a; color: #c8e6ff; border-color: #2d5c92; }
+      button.warn { background: #261c12; color: #ffd7a3; border-color: #8a5a1f; }
+      select { background: #111c2b; color: var(--text); border-color: #2b3d5a; }
+      .nav button.active { background: #10213a; color: #d9f2ff; }
+      th, td { border-bottom-color: #263550; }
+      .state-badge.ok { background: #102b52; color: #9bd7ff; }
       .state-badge.warn { background: #362411; color: #f7c26f; }
       .state-badge.bad { background: #3a1717; color: #fca5a5; }
-      .chip { background: #232d34; color: #c5ced6; }
-      .chip.ok { background: #143323; color: #86efac; }
+      .chip { background: #17243a; color: #c5d8ea; }
+      .chip.ok { background: #102b52; color: #9bd7ff; }
       .chip.warn { background: #362411; color: #f7c26f; }
       .chip.bad { background: #3a1717; color: #fca5a5; }
-      .chip.remote { background: #12313a; color: #8de7f8; }
-      .pin-button.active { background: #392d12; color: #f7cc62; border-color: #8a681f; }
-      .app-icon { background: #15302d; color: #a8f0e7; border-color: #2e5d57; }
+      .chip.remote { background: #0f2a44; color: #9bd7ff; }
+      .pin-button.active { background: #25314d; color: #d9f2ff; border-color: #4d78b8; }
+      .terminal-item.active { background: #10213a; }
+      .app-icon { background: #10213a; color: #d9f2ff; border-color: #2d5c92; }
+      .device-icon { background: #06101d; color: #d9f2ff; border-color: #2d5c92; }
+      .device-stat { background: #121c2b; border-color: #263550; }
     }
   </style>
 </head>
@@ -1087,6 +1139,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         <button id="nav-apps" class="active" onclick="setView('apps')">Apps</button>
         <button id="nav-services" onclick="setView('services')">Services</button>
         <button id="nav-terminals" onclick="setView('terminals')">Terminals</button>
+        <button id="nav-devices" onclick="setView('devices')">Devices</button>
         <button id="nav-ports" onclick="setView('ports')">Ports</button>
       </nav>
       <div class="sidebar-footer">
@@ -1120,6 +1173,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       <section id="apps-view" class="view-pane"></section>
       <section id="services-view" class="view-pane"></section>
       <section id="terminals-view" class="view-pane hidden"></section>
+      <section id="devices-view" class="view-pane hidden"></section>
       <section id="ports-view" class="view-pane hidden"></section>
     </main>
   </div>
@@ -1158,20 +1212,28 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
     }
 
     function setView(view) {
+      view = normalizeView(view);
       currentView = view;
+      if (window.location.hash !== '#' + view) history.replaceState(null, '', '#' + view);
       document.getElementById('nav-apps').classList.toggle('active', view === 'apps');
       document.getElementById('nav-services').classList.toggle('active', view === 'services');
       document.getElementById('nav-terminals').classList.toggle('active', view === 'terminals');
+      document.getElementById('nav-devices').classList.toggle('active', view === 'devices');
       document.getElementById('nav-ports').classList.toggle('active', view === 'ports');
       document.getElementById('view-title').textContent = viewTitle(view);
       if (view === 'terminals') loadTerminalSessions();
       render();
     }
 
+    function normalizeView(view) {
+      return ['apps', 'services', 'terminals', 'devices', 'ports'].includes(view) ? view : 'apps';
+    }
+
     function viewTitle(view) {
       if (view === 'apps') return 'Apps';
       if (view === 'services') return 'Services';
       if (view === 'terminals') return 'Terminals';
+      if (view === 'devices') return 'Devices';
       return 'Ports';
     }
 
@@ -1191,6 +1253,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       const visibleRows = filterText ? rows.filter(matchesFilter) : rows;
       const sortedRows = sortRows(visibleRows);
       const local = rows.find(row => row.local_machine_id)?.local_machine_id || 'local';
+      const allDevices = collectDevices(rows, local);
       const peers = [...new Set(rows.map(row => row.source_machine).filter(machine => machine && machine !== local))];
       const running = rows.filter(row => serviceState(row.runtime_status).key === 'running').length;
       const stale = rows.filter(row => serviceState(row.runtime_status).key === 'stale').length;
@@ -1200,7 +1263,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
       document.getElementById('status').textContent = visibleRows.length + ' shown / ' + rows.length + ' service record(s), ' + peers.length + ' peer source(s), ledger OK';
       document.getElementById('summary').innerHTML = `
-        ${metric(currentView === 'apps' ? 'Apps' : 'Services', rows.length)}
+        ${metric(currentView === 'devices' ? 'Devices' : (currentView === 'apps' ? 'Apps' : 'Services'), currentView === 'devices' ? allDevices.length : rows.length)}
         ${metric('Running', running)}
         ${metric('Stale', stale)}
         ${metric('Peers', peers.length ? peers.join(', ') : 'none', true)}
@@ -1208,10 +1271,12 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       document.getElementById('apps-view').classList.toggle('hidden', currentView !== 'apps');
       document.getElementById('services-view').classList.toggle('hidden', currentView !== 'services');
       document.getElementById('terminals-view').classList.toggle('hidden', currentView !== 'terminals');
+      document.getElementById('devices-view').classList.toggle('hidden', currentView !== 'devices');
       document.getElementById('ports-view').classList.toggle('hidden', currentView !== 'ports');
       renderApps(sortedRows);
       renderServices(sortedRows);
       renderTerminals();
+      renderDevices(sortedRows, local);
       renderPorts(sortedRows);
     }
 
@@ -1400,6 +1465,101 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
         ? parts.slice(0, 2).map(part => part[0]).join('')
         : source.slice(0, 2);
       return letters.toUpperCase();
+    }
+
+    function renderDevices(rows, local) {
+      const target = document.getElementById('devices-view');
+      const devices = collectDevices(rows, local);
+      if (!devices.length) {
+        target.innerHTML = '<div class="empty">No devices discovered.</div>';
+        return;
+      }
+      target.innerHTML = `<div class="device-grid">${devices.map(device => `
+        <article class="device-card">
+          <div class="device-head">
+            <div class="device-icon">${escapeHtml(deviceInitials(device.id))}</div>
+            <div class="device-name">
+              <strong>${escapeHtml(device.id)}</strong>
+              <span>${escapeHtml(deviceSubtitle(device))}</span>
+            </div>
+          </div>
+          <div class="device-stats">
+            ${deviceStat('Seen', device.seen)}
+            ${deviceStat('Owned', device.owned)}
+            ${deviceStat('Running', device.running)}
+          </div>
+          <div class="chips">
+            ${[...device.roles].map(role => chip(role, role === 'local' ? 'ok' : (role === 'peer' ? 'remote' : 'muted'))).join('')}
+            ${chip('ports ' + portSummary(device.ports), 'muted')}
+          </div>
+          <div class="device-todo">TODO: device display names, SSH aliases, dashboard endpoint, trust policy, and local-forward defaults will be managed here.</div>
+        </article>
+      `).join('')}</div>`;
+    }
+
+    function collectDevices(rows, local) {
+      const devices = new Map();
+      const ensure = id => {
+        const key = String(id || '').trim() || 'unknown';
+        if (!devices.has(key)) {
+          devices.set(key, { id: key, roles: new Set(), seen: 0, owned: 0, running: 0, stale: 0, ports: [] });
+        }
+        return devices.get(key);
+      };
+      ensure(local).roles.add('local');
+      for (const row of rows) {
+        const owner = row.owner_host || 'unknown';
+        const source = row.source_machine || owner || 'unknown';
+        const state = serviceState(row.runtime_status).key;
+        const sourceDevice = ensure(source);
+        sourceDevice.roles.add(source === local ? 'local' : 'peer');
+        sourceDevice.seen += 1;
+        if (state === 'running') sourceDevice.running += 1;
+        if (state === 'stale') sourceDevice.stale += 1;
+
+        const ownerDevice = ensure(owner);
+        ownerDevice.roles.add(owner === local ? 'local' : 'owner');
+        ownerDevice.owned += 1;
+        if (row.port) ownerDevice.ports.push(Number(row.port));
+      }
+      return [...devices.values()].sort((a, b) => {
+        const rank = roleRank(a) - roleRank(b);
+        return rank || compareText(a.id, b.id);
+      });
+    }
+
+    function roleRank(device) {
+      if (device.roles.has('local')) return 0;
+      if (device.roles.has('peer')) return 1;
+      return 2;
+    }
+
+    function deviceSubtitle(device) {
+      const bits = [];
+      if (device.roles.has('local')) bits.push('local machine');
+      if (device.roles.has('peer')) bits.push('peer registry source');
+      if (device.roles.has('owner')) bits.push('service owner');
+      return bits.join(' - ') || 'device';
+    }
+
+    function deviceInitials(name) {
+      const source = String(name || 'device').trim();
+      const parts = source.split(/[\s._-]+/).filter(Boolean);
+      const letters = parts.length > 1
+        ? parts.slice(0, 2).map(part => part[0]).join('')
+        : source.slice(0, 2);
+      return letters.toUpperCase();
+    }
+
+    function deviceStat(label, value) {
+      return `<div class="device-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+    }
+
+    function portSummary(ports) {
+      const unique = [...new Set((ports || []).filter(port => Number.isFinite(port)).sort((a, b) => a - b))];
+      if (!unique.length) return 'none';
+      if (unique.length <= 3) return unique.map(port => ':' + port).join(', ');
+      return ':' + unique[0] + '-:' + unique[unique.length - 1] + ' (' + unique.length + ')';
     }
 
     function renderServices(rows) {
@@ -1947,6 +2107,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       loadPorts();
     }
 
+    if (window.location.hash) setView(window.location.hash.slice(1));
     loadPorts();
     loadAgentPrompts();
     window.addEventListener('focus', refreshOnAttention);
