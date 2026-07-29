@@ -1,5 +1,9 @@
 # Bridgeboard Changelog
 
+- 2026-07-30: Added `bridgeboard ports --no-runtime` for fast app-panel
+  listing on Windows owners. The default `ports` behavior still performs local
+  runtime/PID checks, while `--no-runtime` exports local rows without
+  per-service probes and marks skipped local runtime as `not-checked`.
 - 2026-07-30: Added the `prepare-open` JSON integration command for
   TethysUNE-style native shells. It accepts a stable service reference
   (`--id`, optional `--owner-host`, `--source-machine`, `--local-port`, and

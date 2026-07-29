@@ -196,6 +196,8 @@ struct PortsArgs {
     json: bool,
     #[arg(long)]
     peers: bool,
+    #[arg(long)]
+    no_runtime: bool,
 }
 
 #[derive(Args)]
@@ -621,7 +623,7 @@ fn cmd_status(env: &BridgeEnv, args: StatusArgs) -> Result<()> {
 }
 
 fn cmd_ports(env: &BridgeEnv, args: PortsArgs) -> Result<()> {
-    let rows = core::port_rows(env, args.peers)?;
+    let rows = core::port_rows_with_runtime(env, args.peers, !args.no_runtime)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&rows)?);
     } else {

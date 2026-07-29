@@ -240,6 +240,7 @@ bridgeboard ports --peers
 bridgeboard list
 bridgeboard list --peers
 bridgeboard status image-review-portal --peers
+bridgeboard ports --json --peers --no-runtime
 bridgeboard up image-review-portal
 bridgeboard up --peer gpu-box image-review-portal
 bridgeboard up --peer gpu-box --local-port 24660 image-review-portal
@@ -282,6 +283,17 @@ bridgeboard prepare-open \
 native shell should pass them when opening a row from a peer-aware service
 list. `--target` is `internal` or `external`; it is echoed in the JSON result
 for policy decisions, and neither value opens a browser.
+
+For app-panel listing on Windows owners, prefer:
+
+```bash
+bridgeboard ports --json --peers --no-runtime
+```
+
+This returns the registered local and peer service rows without per-service
+Windows PID/health probes. Local rows use `runtime_status: "not-checked"` in
+this mode; call `status <id> --json` or `prepare-open` for a selected service
+when current runtime detail is needed.
 
 The JSON result is shaped for a native Web tab/workspace:
 

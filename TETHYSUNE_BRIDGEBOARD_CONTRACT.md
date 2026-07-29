@@ -69,6 +69,18 @@ Current real service:
 - owner config: `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\denia-score-annotator.yaml`
 - owner registry: `C:\Users\senxiu\AppData\Roaming\bridgeboard\registry.json`
 
+Fast app-panel listing:
+
+```bash
+bridgeboard ports --json --peers --no-runtime
+```
+
+Use `--no-runtime` for TethysUNE's normal service grid, especially on Windows
+owners. It avoids per-service PID/health probes and keeps the provider under a
+short UI timeout. A local row whose runtime was intentionally skipped reports
+`runtime_status: "not-checked"`. Use `prepare-open` or `status <id> --json` for
+the selected service when exact runtime detail is required.
+
 How to identify it from tethys:
 
 ```bash

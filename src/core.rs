@@ -134,9 +134,17 @@ pub fn status_rows(
 }
 
 pub fn port_rows(env: &BridgeEnv, include_peers: bool) -> Result<Vec<PortRow>> {
+    port_rows_with_runtime(env, include_peers, true)
+}
+
+pub fn port_rows_with_runtime(
+    env: &BridgeEnv,
+    include_peers: bool,
+    include_runtime: bool,
+) -> Result<Vec<PortRow>> {
     let registry = Registry::load(&env.paths.registry_file)?;
     let state = State::load(&env.paths.state_file)?;
-    let mut exports = vec![registry.export(&env.machine_id)?];
+    let mut exports = vec![registry.export_with_runtime(&env.machine_id, include_runtime)?];
     if include_peers {
         let peer_results = peer::fetch_peer_exports(&env.app);
         peer::print_peer_warnings(&peer_results);
@@ -245,9 +253,13 @@ pub(crate) fn port_rows_from_exports(
                 startup_policy: startup_policy_label(service.lifecycle.startup).into(),
                 restart_policy: restart_policy_label(service.lifecycle.restart).into(),
                 desired_state: desired,
-                runtime_status: service
-                    .runtime_status
-                    .unwrap_or_else(|| "remote-record".into()),
+                runtime_status: service.runtime_status.unwrap_or_else(|| {
+                    if export.machine_id == local_machine_id {
+                        "not-checked".into()
+                    } else {
+                        "remote-record".into()
+                    }
+                }),
                 url,
                 direct_open,
                 local_port: action_local_port,
@@ -1604,6 +1616,17 @@ mod tests {
         assert_eq!(preferred_peer_fallback_port(24260), Some(24660));
         assert_eq!(preferred_peer_fallback_port(24308), Some(24708));
         assert_eq!(preferred_peer_fallback_port(24699), None);
+    }
+
+    #[test]
+    fn port_rows_no_runtime_marks_local_runtime_as_not_checked() {
+        let cfg = external_test_config();
+        let (_dir, env) = env_with_service(&cfg);
+        let rows = port_rows_with_runtime(&env, false, false).unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "web-portal");
+        assert_eq!(rows[0].runtime_status, "not-checked");
     }
 
     #[test]
