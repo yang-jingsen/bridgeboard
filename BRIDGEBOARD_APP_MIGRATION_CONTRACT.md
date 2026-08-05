@@ -136,7 +136,57 @@ bridgeboard ports --json --peers --no-runtime
 Open embedded:
 
 ```bash
-bridgeboard prepare-open --id <id> --owner-host <owner> --source-machine <source> --local-port <local-port> --target internal
+bridgeboard prepare-open --id <id> --owner-host <owner> --source-machine <source> --port <port> --local-port <local-port> --target internal
+```
+
+Read-only live observation:
+
+```bash
+bridgeboard observe --json --peers --timeout-sec <seconds>
+```
+
+This returns `schema: bridgeboard.observe.v1`. The command is side-effect free:
+it does not start services, create tunnels, or write state. Peer observation is
+batched per source/owner machine and bounded by the explicit timeout. Each row
+echoes exact identity as `service_ref.id`, `owner_host`, `source_machine`,
+`port`, plus nullable `local_port` beside the service ref. App validators
+should treat missing and null `local_port` as equivalent, and should reject a
+numeric mismatch.
+
+Status values:
+
+- `healthy`: reachable HTTP 2xx/3xx and body expectations passed.
+- `unhealthy`: reachable HTTP endpoint failed status/body expectations.
+- `unreachable`: no usable listener or network path within timeout. A stopped
+  remote service is represented here, usually as `connection-refused`.
+- `unknown`: not observed, unsupported URL, peer observe unavailable, or schema
+  mismatch.
+
+Small schema excerpt:
+
+```json
+{
+  "schema": "bridgeboard.observe.v1",
+  "rows": [
+    {
+      "service_ref": {
+        "id": "image-review-portal",
+        "owner_host": "gpu-box",
+        "source_machine": "gpu-box",
+        "port": 24001
+      },
+      "local_port": 24660,
+      "observation": {
+        "status": "healthy",
+        "reason": "http-ok",
+        "observed_at": "unix:0"
+      },
+      "safe_open_actions": ["prepare-open"],
+      "safe_lifecycle_actions": ["remote-up", "remote-down", "remote-restart"]
+    }
+  ],
+  "warnings": []
+}
 ```
 
 Local managed launch-spec and desired-state:
@@ -168,10 +218,19 @@ Peer/local-forward lifecycle:
 bridgeboard up --peer <source-machine> --local-port <local-port> <id>
 ```
 
-Remote owner lifecycle currently exists in Bridgeboard core/dashboard target
-actions. CLI `remote-up`, `remote-down`, and `remote-restart` are id-only
-compatibility wrappers, so runtime hosts should avoid them for duplicate ids
-unless a row-scoped CLI is added.
+Remote owner lifecycle for native app hosts:
+
+```bash
+bridgeboard remote-up <id> --owner-host <owner> --source-machine <source> --port <port> --local-port <local-port> --json
+bridgeboard remote-down <id> --owner-host <owner> --source-machine <source> --port <port> --json
+bridgeboard remote-restart <id> --owner-host <owner> --source-machine <source> --port <port> --local-port <local-port> --json
+```
+
+JSON lifecycle output uses `schema: bridgeboard.lifecycle-action.v1`, echoes the
+verified `service_ref`, echoes nullable `local_port`, and returns `messages`
+and `warnings` arrays. JSON lifecycle requires `id + owner_host +
+source_machine + port`; id-only remote lifecycle remains a human compatibility
+path and should not be used by strict app integrations.
 
 External/manual records may be opened and tunneled, but lifecycle actions are
 safe only when the record has explicit `start_command`, `stop_command`,

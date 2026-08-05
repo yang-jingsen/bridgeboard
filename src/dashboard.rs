@@ -261,6 +261,11 @@ fn handle_request(runtime: &DashboardRuntime, stream: &mut TcpStream, token: &st
                 .map(str::parse::<u16>)
                 .transpose()
                 .context("invalid local_port")?;
+            let port = query_value(&url, "port")
+                .as_deref()
+                .map(str::parse::<u16>)
+                .transpose()
+                .context("invalid port")?;
             match run_action(
                 &runtime.env,
                 &id,
@@ -268,6 +273,7 @@ fn handle_request(runtime: &DashboardRuntime, stream: &mut TcpStream, token: &st
                 title.as_deref(),
                 owner_host.as_deref(),
                 source_machine.as_deref(),
+                port,
                 local_port,
             ) {
                 Ok(message) => respond_json(
@@ -577,6 +583,7 @@ fn run_action(
     title: Option<&str>,
     owner_host: Option<&str>,
     source_machine: Option<&str>,
+    port: Option<u16>,
     local_port: Option<u16>,
 ) -> Result<String> {
     let peer_source_target = source_machine
@@ -584,7 +591,7 @@ fn run_action(
         .unwrap_or(false);
     if action == "open" {
         let url = if peer_source_target {
-            core::open_remote_target(env, id, owner_host, source_machine, local_port)?
+            core::open_remote_target(env, id, owner_host, source_machine, port, local_port)?
         } else {
             core::open(env, id)?
         };
@@ -593,7 +600,7 @@ fn run_action(
     if action == "rename" {
         let title = title.context("missing title")?;
         let lines = if peer_source_target {
-            core::rename_title_target(env, id, title, owner_host, source_machine)?
+            core::rename_title_target(env, id, title, owner_host, source_machine, port)?
         } else {
             core::rename_title(env, id, title)?
         };
@@ -603,28 +610,28 @@ fn run_action(
     let lines = match action {
         "up" => {
             if peer_source_target {
-                core::remote_up_target(env, id, owner_host, source_machine, local_port)?
+                core::remote_up_target(env, id, owner_host, source_machine, port, local_port)?
             } else {
                 core::up(env, id)?
             }
         }
         "remote-up" => {
             if peer_source_target {
-                core::remote_up_target(env, id, owner_host, source_machine, local_port)?
+                core::remote_up_target(env, id, owner_host, source_machine, port, local_port)?
             } else {
                 core::remote_up(env, id)?
             }
         }
         "remote-down" => {
             if peer_source_target {
-                core::remote_down_target(env, id, owner_host, source_machine)?
+                core::remote_down_target(env, id, owner_host, source_machine, port)?
             } else {
                 core::remote_down(env, id)?
             }
         }
         "remote-restart" => {
             if peer_source_target {
-                core::remote_restart_target(env, id, owner_host, source_machine, local_port)?
+                core::remote_restart_target(env, id, owner_host, source_machine, port, local_port)?
             } else {
                 core::remote_restart(env, id)?
             }
@@ -1350,6 +1357,7 @@ const DASHBOARD_HTML: &str = r##"<!doctype html>
       const extra = {
         owner_host: row.owner_host || '',
         source_machine: row.source_machine || '',
+        port: String(row.port || ''),
       };
       if (row.local_port) extra.local_port = String(row.local_port);
       return extra;

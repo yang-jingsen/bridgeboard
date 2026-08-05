@@ -241,12 +241,14 @@ bridgeboard list
 bridgeboard list --peers
 bridgeboard status image-review-portal --peers
 bridgeboard ports --json --peers --no-runtime
+bridgeboard observe --json --peers --timeout-sec 2
 bridgeboard runtime-spec --json
 bridgeboard runtime-spec image-review-portal --json
 bridgeboard up image-review-portal
 bridgeboard up --peer gpu-box image-review-portal
 bridgeboard up --peer gpu-box --local-port 24660 image-review-portal
 bridgeboard remote-up image-review-portal
+bridgeboard remote-up image-review-portal --owner-host gpu-box --source-machine gpu-box --port 24001 --local-port 24660 --json
 bridgeboard remote-down image-review-portal
 bridgeboard remote-restart image-review-portal
 bridgeboard down image-review-portal
@@ -277,14 +279,68 @@ bridgeboard prepare-open \
   --id image-review-portal \
   --owner-host gpu-box \
   --source-machine gpu-box \
+  --port 24001 \
   --local-port 24660 \
   --target internal
 ```
 
-`--owner-host`, `--source-machine`, and `--local-port` are optional, but a
-native shell should pass them when opening a row from a peer-aware service
-list. `--target` is `internal` or `external`; it is echoed in the JSON result
-for policy decisions, and neither value opens a browser.
+`--owner-host`, `--source-machine`, `--port`, and `--local-port` are optional
+for compatibility, but a native shell should pass them when opening a row from
+a peer-aware service list. `--target` is `internal` or `external`; it is echoed
+in the JSON result for policy decisions, and neither value opens a browser.
+
+Use `observe` when the UI needs live status rather than registry presence:
+
+```bash
+bridgeboard observe --json --peers --timeout-sec 2
+```
+
+The command is read-only: it does not start services, create SSH forwards, or
+write state. The JSON schema is `bridgeboard.observe.v1`; rows preserve
+`service_ref.id`, `owner_host`, `source_machine`, `port`, and nullable
+`local_port`. Status is one of `healthy`, `unhealthy`, `unreachable`, or
+`unknown`. A reachable host with a stopped service is represented as
+`unreachable`, usually with reason `connection-refused` or `timeout`, not as
+`unknown`.
+
+```json
+{
+  "schema": "bridgeboard.observe.v1",
+  "rows": [
+    {
+      "service_ref": {
+        "id": "image-review-portal",
+        "owner_host": "gpu-box",
+        "source_machine": "gpu-box",
+        "port": 24001
+      },
+      "local_port": 24660,
+      "observation": {
+        "status": "healthy",
+        "reason": "http-ok",
+        "http_status": "HTTP/1.1 200 OK"
+      },
+      "safe_open_actions": ["prepare-open"],
+      "safe_lifecycle_actions": ["remote-up", "remote-down", "remote-restart"]
+    }
+  ]
+}
+```
+
+Exact-reference remote lifecycle for native app hosts uses JSON output:
+
+```bash
+bridgeboard remote-up image-review-portal \
+  --owner-host gpu-box \
+  --source-machine gpu-box \
+  --port 24001 \
+  --local-port 24660 \
+  --json
+```
+
+The lifecycle JSON schema is `bridgeboard.lifecycle-action.v1`. JSON lifecycle
+requires `--owner-host`, `--source-machine`, and `--port`; `--local-port`
+remains optional and is echoed when present.
 
 For app-panel listing on Windows owners, prefer:
 

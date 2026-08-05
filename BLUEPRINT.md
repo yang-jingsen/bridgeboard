@@ -233,6 +233,26 @@ migration acceptance.
 | Add local managed runtime-spec interface | Completed | `runtime-spec --json` exposes launch spec and desired state without YAML parsing. |
 | Include owner/source config path in the result | Completed | Required for reversible Denia migration auditing. |
 | Document the Bridgeboard App migration inventory | Completed | Covers managed services, external handoffs, Cutex exclusions, state, and tunnels. |
+
+## Current Stage 11 BB-1 App Contracts
+
+Goal: expose the smallest Bridgeboard-owned CLI contracts that let a native
+Bridgeboard App control exact peer rows and display truthful remote status
+without falling back to registry presence as health.
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| Add exact-reference remote lifecycle CLI flags | Completed | `remote-up`, `remote-down`, and `remote-restart` accept `owner_host`, `source_machine`, required targeted `port`, optional `local_port`, and JSON output while preserving id-only compatibility. |
+| Add bounded read-only observation command | Completed | Versioned JSON envelope, no state writes, no service starts, no SSH tunnel creation, one bounded peer observation command per source machine. |
+| Document BB-1 contracts | Completed | README and migration contract include exact row identity, statuses, safe action fields, lifecycle JSON, and reachable-but-stopped semantics. |
+| Validate and notify App agents | Completed | Rust checks and local/peer observe smoke passed; dependency commit is the handoff boundary for `tethys-bridgeboard` and `tethys-une`. |
+
+Validation:
+
+- `cargo fmt --check`
+- `cargo test`
+- `cargo check --bins`
+- `bridgeboard observe --json --timeout-sec 1`
 | Validate Linux and Windows CLI surfaces | Completed | Includes tethys Denia smoke and Windows target check. |
 | Deploy refreshed CLI to eva-02 for runtime validation | Completed | Replaced CLI after tests; preserved service YAML/state. |
 | Revert legacy Bridgeboard branding | Completed | Dashboard/Tauri/readme display names are Bridgeboard again. |

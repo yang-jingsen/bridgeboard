@@ -1,5 +1,16 @@
 # Bridgeboard Changelog
 
+- 2026-08-05: Added BB-1 Bridgeboard App contracts. `observe --json` returns
+  `bridgeboard.observe.v1` as a bounded, side-effect-free live observation
+  envelope with exact row identity, healthy/unhealthy/unreachable/unknown
+  status, safe open actions, and safe lifecycle actions. `remote-up`,
+  `remote-down`, and `remote-restart` now accept exact row reference flags
+  including `--port`; JSON lifecycle output uses
+  `bridgeboard.lifecycle-action.v1` and requires `id + owner_host +
+  source_machine + port`. `prepare-open` also accepts optional `--port` for
+  row identity verification. Validation: `cargo fmt --check`, `cargo test`,
+  and `cargo check --bins` passed; local observe smoke returned healthy
+  managed rows and unreachable external rows without starting services.
 - 2026-08-05: Reverted legacy Bridgeboard project branding from TethysUNE back
   to Bridgeboard in the dashboard HTML, Tauri shell metadata/menu/window title,
   CLI serve output, and README. Expanded the TethysUNE Bridgeboard App contract

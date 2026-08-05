@@ -43,14 +43,15 @@ enum Command {
     Status(StatusArgs),
     Ports(PortsArgs),
     Up(UpArgs),
-    RemoteUp(IdArgs),
-    RemoteDown(IdArgs),
-    RemoteRestart(IdArgs),
+    RemoteUp(RemoteTargetArgs),
+    RemoteDown(RemoteTargetArgs),
+    RemoteRestart(RemoteTargetArgs),
     Down(IdArgs),
     Stop(IdArgs),
     Restart(IdArgs),
     Rename(RenameArgs),
     Logs(LogsArgs),
+    Observe(ObserveArgs),
     #[command(name = "runtime-spec")]
     RuntimeSpec(RuntimeSpecArgs),
     #[command(name = "prepare-open")]
@@ -98,6 +99,50 @@ struct UpArgs {
     peer: Option<String>,
     #[arg(long)]
     local_port: Option<u16>,
+}
+
+#[derive(Args)]
+struct RemoteTargetArgs {
+    id: String,
+    #[arg(long)]
+    owner_host: Option<String>,
+    #[arg(long)]
+    source_machine: Option<String>,
+    #[arg(long)]
+    port: Option<u16>,
+    #[arg(long)]
+    local_port: Option<u16>,
+    #[arg(long)]
+    json: bool,
+}
+
+impl RemoteTargetArgs {
+    fn is_targeted(&self) -> bool {
+        self.owner_host.is_some()
+            || self.source_machine.is_some()
+            || self.port.is_some()
+            || self.local_port.is_some()
+    }
+
+    fn exact_ref(&self) -> Result<core::PrepareOpenServiceRef> {
+        let owner_host = self
+            .owner_host
+            .clone()
+            .context("--owner-host is required for targeted lifecycle")?;
+        let source_machine = self
+            .source_machine
+            .clone()
+            .context("--source-machine is required for targeted lifecycle")?;
+        let port = self
+            .port
+            .context("--port is required for targeted lifecycle")?;
+        Ok(core::PrepareOpenServiceRef {
+            id: self.id.clone(),
+            owner_host,
+            source_machine,
+            port,
+        })
+    }
 }
 
 #[derive(Args)]
@@ -222,6 +267,17 @@ struct LogsArgs {
 }
 
 #[derive(Args)]
+struct ObserveArgs {
+    id: Option<String>,
+    #[arg(long)]
+    json: bool,
+    #[arg(long)]
+    peers: bool,
+    #[arg(long, default_value_t = 3)]
+    timeout_sec: u64,
+}
+
+#[derive(Args)]
 struct RuntimeSpecArgs {
     id: Option<String>,
     #[arg(long)]
@@ -236,6 +292,8 @@ struct PrepareOpenArgs {
     owner_host: Option<String>,
     #[arg(long)]
     source_machine: Option<String>,
+    #[arg(long)]
+    port: Option<u16>,
     #[arg(long)]
     local_port: Option<u16>,
     #[arg(long, value_enum, default_value_t = PrepareOpenTarget::Internal)]
@@ -333,14 +391,15 @@ fn dispatch(env: BridgeEnv, command: Command) -> Result<()> {
                 print_lines(core::up(&env, &args.id)?)
             }
         },
-        Command::RemoteUp(args) => print_lines(core::remote_up(&env, &args.id)?),
-        Command::RemoteDown(args) => print_lines(core::remote_down(&env, &args.id)?),
-        Command::RemoteRestart(args) => print_lines(core::remote_restart(&env, &args.id)?),
+        Command::RemoteUp(args) => cmd_remote_up(&env, args),
+        Command::RemoteDown(args) => cmd_remote_down(&env, args),
+        Command::RemoteRestart(args) => cmd_remote_restart(&env, args),
         Command::Down(args) => print_lines(core::down(&env, &args.id)?),
         Command::Stop(args) => print_lines(core::down(&env, &args.id)?),
         Command::Restart(args) => print_lines(core::restart(&env, &args.id)?),
         Command::Rename(args) => print_lines(core::rename_title(&env, &args.id, &args.title)?),
         Command::Logs(args) => cmd_logs(&env, args),
+        Command::Observe(args) => cmd_observe(&env, args),
         Command::RuntimeSpec(args) => cmd_runtime_spec(&env, args),
         Command::PrepareOpen(args) => cmd_prepare_open(&env, args),
         Command::Open(args) => {
@@ -669,6 +728,35 @@ fn cmd_logs(env: &BridgeEnv, args: LogsArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_observe(env: &BridgeEnv, args: ObserveArgs) -> Result<()> {
+    let envelope = core::observe_services(
+        env,
+        args.id.as_deref(),
+        args.peers,
+        Duration::from_secs(args.timeout_sec.max(1)),
+    )?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&envelope)?);
+    } else {
+        for row in envelope.rows {
+            println!(
+                "{} owner={} source={} port={} status={} reason={} from={}",
+                row.service_ref.id,
+                row.service_ref.owner_host,
+                row.service_ref.source_machine,
+                row.service_ref.port,
+                row.observation.status,
+                row.observation.reason,
+                row.observed_from
+            );
+        }
+        for warning in envelope.warnings {
+            eprintln!("warning: {warning}");
+        }
+    }
+    Ok(())
+}
+
 fn cmd_runtime_spec(env: &BridgeEnv, args: RuntimeSpecArgs) -> Result<()> {
     let rows = core::managed_runtime_specs(env, args.id.as_deref())?;
     if args.json {
@@ -695,10 +783,114 @@ fn cmd_prepare_open(env: &BridgeEnv, args: PrepareOpenArgs) -> Result<()> {
         &args.id,
         args.owner_host.as_deref(),
         args.source_machine.as_deref(),
+        args.port,
         args.local_port,
         args.target.as_str(),
     )?;
     println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+fn cmd_remote_up(env: &BridgeEnv, args: RemoteTargetArgs) -> Result<()> {
+    let exact_ref = if args.is_targeted() {
+        Some(args.exact_ref()?)
+    } else {
+        None
+    };
+    if args.json && exact_ref.is_none() {
+        bail!("--json remote-up requires --owner-host, --source-machine, and --port");
+    }
+    let lines = if exact_ref.is_some() {
+        core::remote_up_target(
+            env,
+            &args.id,
+            args.owner_host.as_deref(),
+            args.source_machine.as_deref(),
+            args.port,
+            args.local_port,
+        )?
+    } else {
+        core::remote_up(env, &args.id)?
+    };
+    output_lifecycle_action("remote-up", exact_ref, args.local_port, lines, args.json)
+}
+
+fn cmd_remote_down(env: &BridgeEnv, args: RemoteTargetArgs) -> Result<()> {
+    let exact_ref = if args.is_targeted() {
+        Some(args.exact_ref()?)
+    } else {
+        None
+    };
+    if args.json && exact_ref.is_none() {
+        bail!("--json remote-down requires --owner-host, --source-machine, and --port");
+    }
+    let lines = if exact_ref.is_some() {
+        core::remote_down_target(
+            env,
+            &args.id,
+            args.owner_host.as_deref(),
+            args.source_machine.as_deref(),
+            args.port,
+        )?
+    } else {
+        core::remote_down(env, &args.id)?
+    };
+    output_lifecycle_action("remote-down", exact_ref, args.local_port, lines, args.json)
+}
+
+fn cmd_remote_restart(env: &BridgeEnv, args: RemoteTargetArgs) -> Result<()> {
+    let exact_ref = if args.is_targeted() {
+        Some(args.exact_ref()?)
+    } else {
+        None
+    };
+    if args.json && exact_ref.is_none() {
+        bail!("--json remote-restart requires --owner-host, --source-machine, and --port");
+    }
+    let lines = if exact_ref.is_some() {
+        core::remote_restart_target(
+            env,
+            &args.id,
+            args.owner_host.as_deref(),
+            args.source_machine.as_deref(),
+            args.port,
+            args.local_port,
+        )?
+    } else {
+        core::remote_restart(env, &args.id)?
+    };
+    output_lifecycle_action(
+        "remote-restart",
+        exact_ref,
+        args.local_port,
+        lines,
+        args.json,
+    )
+}
+
+fn output_lifecycle_action(
+    action: &str,
+    service_ref: Option<core::PrepareOpenServiceRef>,
+    local_port: Option<u16>,
+    lines: Vec<String>,
+    json: bool,
+) -> Result<()> {
+    if !json {
+        return print_lines(lines);
+    }
+    let service_ref = service_ref.context("JSON lifecycle output requires an exact service ref")?;
+    let (messages, warnings) = core::split_action_messages(lines);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "bridgeboard.lifecycle-action.v1",
+            "requested_action": action,
+            "service_ref": service_ref,
+            "local_port": local_port,
+            "messages": messages,
+            "warnings": warnings,
+        }))?
+    );
     Ok(())
 }
 
@@ -863,4 +1055,65 @@ fn print_port_plan() {
         "Different owners may each use the same service port; local forwards mirror the owner port by default."
     );
     println!("Use --local-port only when the default local tunnel port is occupied.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn remote_lifecycle_accepts_exact_row_reference_flags() {
+        let cli = Cli::try_parse_from([
+            "bridgeboard",
+            "remote-up",
+            "image-review-portal",
+            "--owner-host",
+            "gpu-box",
+            "--source-machine",
+            "gpu-box",
+            "--port",
+            "24001",
+            "--local-port",
+            "24660",
+            "--json",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::RemoteUp(args) => {
+                assert_eq!(args.id, "image-review-portal");
+                assert_eq!(args.owner_host.as_deref(), Some("gpu-box"));
+                assert_eq!(args.source_machine.as_deref(), Some("gpu-box"));
+                assert_eq!(args.port, Some(24001));
+                assert_eq!(args.local_port, Some(24660));
+                assert!(args.json);
+                assert!(args.is_targeted());
+                assert_eq!(args.exact_ref().unwrap().port, 24001);
+            }
+            _ => panic!("expected remote-up command"),
+        }
+    }
+
+    #[test]
+    fn observe_accepts_json_peers_and_timeout() {
+        let cli = Cli::try_parse_from([
+            "bridgeboard",
+            "observe",
+            "--json",
+            "--peers",
+            "--timeout-sec",
+            "2",
+            "image-review-portal",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Observe(args) => {
+                assert_eq!(args.id.as_deref(), Some("image-review-portal"));
+                assert!(args.json);
+                assert!(args.peers);
+                assert_eq!(args.timeout_sec, 2);
+            }
+            _ => panic!("expected observe command"),
+        }
+    }
 }
