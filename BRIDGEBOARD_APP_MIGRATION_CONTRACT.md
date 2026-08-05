@@ -1,7 +1,9 @@
-# TethysUNE Bridgeboard App Migration Contract
+# Bridgeboard App Migration Contract
 
 This is the Bridgeboard-side contract for migrating Bridgeboard-managed service
-control into the current TethysUNE Bridgeboard App/runtime boundary.
+control into an external app/plugin runtime boundary. TethysUNE is the current
+first consumer of this contract, but Bridgeboard remains a separate legacy
+service manager and protocol provider.
 
 Scope correction:
 
@@ -14,13 +16,13 @@ Scope correction:
 - Do not migrate Cutex-owned services. `cutex-agent-bus` and
   `cutex-management-api` are explicitly excluded; `cutex-desktop-notify` should
   also remain outside this migration unless the owner says otherwise.
-- Revert legacy Bridgeboard project branding back to `Bridgeboard`. Current
-  TethysUNE stays separate and may host a Bridgeboard App/plugin.
+- Keep legacy Bridgeboard project branding as `Bridgeboard`. External app hosts
+  such as TethysUNE stay separate and may host a Bridgeboard App/plugin.
 
 ## Runtime Boundary
 
-Bridgeboard remains the source of truth for service metadata until TethysUNE has
-accepted the migrated runtime:
+Bridgeboard remains the source of truth for service metadata until an external
+runtime host has accepted the migrated runtime:
 
 - registry entries and config paths
 - service lifecycle policy
@@ -30,13 +32,13 @@ accepted the migrated runtime:
 - health/status snapshots
 - safe start/stop/restart semantics
 
-TethysUNE should consume Bridgeboard through structured commands first. It
-should not parse or mutate YAML/state files directly except for audited backup
-or future one-time import tooling.
+Runtime hosts should consume Bridgeboard through structured commands first.
+They should not parse or mutate YAML/state files directly except for audited
+backup or future one-time import tooling.
 
 ## Fast List Path
 
-Use this for the TethysUNE Bridgeboard App service grid:
+Use this for a Bridgeboard App/plugin service grid:
 
 ```bash
 bridgeboard ports --json --peers --no-runtime
@@ -67,8 +69,8 @@ Observed eva-02 latency after the no-runtime CLI update:
 
 ## Open Preparation
 
-Use `prepare-open` when TethysUNE wants to open a service inside its native web
-workspace:
+Use `prepare-open` when a runtime host wants to open a service inside its
+native web workspace:
 
 ```bash
 bridgeboard prepare-open \
@@ -112,8 +114,8 @@ Important result fields:
 }
 ```
 
-`source_config_path` is the owner/source Bridgeboard YAML path. TethysUNE may
-display it or log it for audit, but it should not mutate that file directly.
+`source_config_path` is the owner/source Bridgeboard YAML path. Runtime hosts
+may display it or log it for audit, but should not mutate that file directly.
 
 ## Action Mapping
 
@@ -144,13 +146,13 @@ bridgeboard runtime-spec --json
 bridgeboard runtime-spec <id> --json
 ```
 
-This is the stable structured interface for a TethysUNE Runtime Host cutover.
+This is the stable structured interface for a managed Runtime Host cutover.
 It returns only services where the current machine is the owner and
 `service_mode` is `managed`. It includes `schema:
 bridgeboard.runtime-spec.v1`, row identity, source config path, desired state,
 current managed runtime status, `cwd`, argv `command`, resolved `pid_file`,
 resolved `log_file`, health expectation, startup timeout, URLs, and tunnel
-policy. TethysUNE should use this instead of parsing `portal-bridge.yaml`.
+policy. Runtime hosts should use this instead of parsing `portal-bridge.yaml`.
 
 Local owner lifecycle:
 
@@ -168,13 +170,13 @@ bridgeboard up --peer <source-machine> --local-port <local-port> <id>
 
 Remote owner lifecycle currently exists in Bridgeboard core/dashboard target
 actions. CLI `remote-up`, `remote-down`, and `remote-restart` are id-only
-compatibility wrappers, so TethysUNE should avoid them for duplicate ids unless
-a row-scoped CLI is added.
+compatibility wrappers, so runtime hosts should avoid them for duplicate ids
+unless a row-scoped CLI is added.
 
 External/manual records may be opened and tunneled, but lifecycle actions are
 safe only when the record has explicit `start_command`, `stop_command`,
-`restart_command`, or `task_name` metadata. Otherwise TethysUNE should withhold
-Start/Stop/Restart or label them as owner/manual.
+`restart_command`, or `task_name` metadata. Otherwise runtime hosts should
+withhold Start/Stop/Restart or label them as owner/manual.
 
 ## Inventory
 
@@ -207,8 +209,8 @@ For tethys direct cutover, the immediate `runtime-spec --json` services are:
 - `aria-console`
 
 The owner reported these are currently children of legacy `bridgeboard-tray`.
-Do not stop them until the TethysUNE controller is ready to create replacement
-Runtime Host sessions.
+Do not stop them until the receiving runtime controller is ready to create
+replacement Runtime Host sessions.
 
 ### Bridgeboard Handoff Records
 
@@ -275,9 +277,10 @@ bridgeboard.exe prepare-open --id denia-score-annotator --owner-host eva-02 --so
 ```
 
 Denia has no `start_command`, `stop_command`, `restart_command`, or
-`task_name` today. TethysUNE can migrate its registry visibility, tunnel/open
-behavior, and status reads now, but should not claim it can start the owner
-process after reboot until a later handoff update adds explicit start metadata.
+`task_name` today. A runtime host can migrate its registry visibility,
+tunnel/open behavior, and status reads now, but should not claim it can start
+the owner process after reboot until a later handoff update adds explicit start
+metadata.
 
 ## Forward Migration
 
@@ -287,7 +290,7 @@ process after reboot until a later handoff update adds explicit start metadata.
 4. Route opens through `prepare-open`.
 5. Route lifecycle through Bridgeboard semantics only when the row mode and
    metadata prove it is safe.
-6. Persist TethysUNE UI state separately from Bridgeboard registry/state.
+6. Persist runtime-host UI state separately from Bridgeboard registry/state.
 7. After managed-service migration is accepted, retire standalone
    `bridgeboard serve`, `bridgeboard-tray`, their autostart entries, and
    user-systemd units in a separate stop-and-remove stage.
@@ -296,7 +299,7 @@ process after reboot until a later handoff update adds explicit start metadata.
 
 Before standalone runtime retirement, rollback is simple:
 
-1. Stop using the TethysUNE Bridgeboard App runtime.
+1. Stop using the external Bridgeboard App runtime.
 2. Continue using legacy `bridgeboard open`, `bridgeboard serve`, dashboard, or
    tray.
 3. Leave registry/config/state files in place.

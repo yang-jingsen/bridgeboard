@@ -221,10 +221,10 @@ Validation:
 ## Current Stage 10 Bridgeboard App Migration Contract
 
 Goal: expose Bridgeboard as a side-effect-controlled service preparation layer
-for the TethysUNE Bridgeboard App. The app should be able to open local and
-peer web services inside an embedded workspace while Bridgeboard keeps
-ownership of service lifecycle, SSH local-forward setup, and legacy handoff
-records until migration acceptance.
+for native app/plugin hosts. A host should be able to open local and peer web
+services inside an embedded workspace while Bridgeboard keeps ownership of
+service lifecycle, SSH local-forward setup, and legacy handoff records until
+migration acceptance.
 
 | Task | Status | Notes |
 | --- | --- | --- |

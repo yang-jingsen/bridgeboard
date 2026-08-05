@@ -262,8 +262,8 @@ bridgeboard doctor
 bridgeboard watch
 ```
 
-`prepare-open` is the structured integration command for TethysUNE and other
-native shells. It performs the same preparation work that an embedded opener
+`prepare-open` is the structured integration command for native shells and
+plugin hosts. It performs the same preparation work that an embedded opener
 needs, such as starting an `on_demand` service and creating an SSH local
 forward for a peer service, but it does not call the system browser. Existing
 `bridgeboard open <id>` keeps its old behavior and opens the resolved URL
