@@ -51,6 +51,8 @@ enum Command {
     Restart(IdArgs),
     Rename(RenameArgs),
     Logs(LogsArgs),
+    #[command(name = "runtime-spec")]
+    RuntimeSpec(RuntimeSpecArgs),
     #[command(name = "prepare-open")]
     PrepareOpen(PrepareOpenArgs),
     Open(IdArgs),
@@ -220,6 +222,13 @@ struct LogsArgs {
 }
 
 #[derive(Args)]
+struct RuntimeSpecArgs {
+    id: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
 struct PrepareOpenArgs {
     #[arg(long)]
     id: String,
@@ -332,6 +341,7 @@ fn dispatch(env: BridgeEnv, command: Command) -> Result<()> {
         Command::Restart(args) => print_lines(core::restart(&env, &args.id)?),
         Command::Rename(args) => print_lines(core::rename_title(&env, &args.id, &args.title)?),
         Command::Logs(args) => cmd_logs(&env, args),
+        Command::RuntimeSpec(args) => cmd_runtime_spec(&env, args),
         Command::PrepareOpen(args) => cmd_prepare_open(&env, args),
         Command::Open(args) => {
             println!("{}", core::open(&env, &args.id)?);
@@ -659,6 +669,26 @@ fn cmd_logs(env: &BridgeEnv, args: LogsArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_runtime_spec(env: &BridgeEnv, args: RuntimeSpecArgs) -> Result<()> {
+    let rows = core::managed_runtime_specs(env, args.id.as_deref())?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        for row in rows {
+            println!(
+                "{} port={} desired={} runtime={} cwd={} command={}",
+                row.service_ref.id,
+                row.service_ref.port,
+                row.desired_state,
+                row.runtime_status,
+                row.cwd,
+                row.command.join(" ")
+            );
+        }
+    }
+    Ok(())
+}
+
 fn cmd_prepare_open(env: &BridgeEnv, args: PrepareOpenArgs) -> Result<()> {
     let result = core::prepare_open(
         env,
@@ -698,7 +728,7 @@ fn cmd_serve(env: &BridgeEnv, args: ServeArgs) -> Result<()> {
         );
     }
     let addr = format!("{}:{}", args.host, args.port);
-    println!("TethysUNE dashboard: http://{addr}/");
+    println!("Bridgeboard dashboard: http://{addr}/");
     dashboard::serve(env.clone(), &args.host, args.port, !args.no_peers)
 }
 

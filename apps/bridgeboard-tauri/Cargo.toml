@@ -2,7 +2,7 @@
 name = "bridgeboard-tauri"
 version = "0.1.0"
 edition = "2021"
-description = "Tauri tray and dashboard shell for TethysUNE"
+description = "Tauri tray and dashboard shell for Bridgeboard"
 authors = ["Yang Jingsen <yang-jingsen@foxmail.com>"]
 license = "MIT"
 

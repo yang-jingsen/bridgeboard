@@ -75,6 +75,36 @@ pub struct PrepareOpenServiceRef {
     pub port: u16,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagedRuntimeSpec {
+    pub schema: String,
+    pub service_ref: PrepareOpenServiceRef,
+    pub source_config_path: String,
+    pub title: String,
+    pub local_machine_id: String,
+    pub desired_state: String,
+    pub runtime_status: String,
+    pub startup_policy: String,
+    pub restart_policy: String,
+    pub cwd: String,
+    pub command: Vec<String>,
+    pub pid_file: String,
+    pub log_file: String,
+    pub health_url: Option<String>,
+    pub health_expect_body_contains: Vec<String>,
+    pub startup_timeout_sec: u64,
+    pub local_url: Option<String>,
+    pub open_url: String,
+    pub network_url: Option<String>,
+    pub tunnel: ManagedRuntimeTunnelSpec,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagedRuntimeTunnelSpec {
+    pub modes: Vec<String>,
+    pub bind_host: String,
+}
+
 impl BridgeEnv {
     pub fn discover() -> Result<Self> {
         let paths = AppPaths::discover()?;
@@ -156,6 +186,87 @@ pub fn port_rows_with_runtime(
     }
     validate_no_port_conflicts(&exports)?;
     Ok(port_rows_from_exports(exports, env, &state))
+}
+
+pub fn managed_runtime_specs(env: &BridgeEnv, id: Option<&str>) -> Result<Vec<ManagedRuntimeSpec>> {
+    let registry = Registry::load(&env.paths.registry_file)?;
+    let state = State::load(&env.paths.state_file)?;
+    let mut matched_id = false;
+    let mut rows = Vec::new();
+    for (entry, cfg) in registry.load_configs()? {
+        if id.map(|wanted| wanted != cfg.id).unwrap_or(false) {
+            continue;
+        }
+        matched_id = true;
+        if cfg.owner_host != env.machine_id || cfg.service.mode != ServiceMode::Managed {
+            continue;
+        }
+        let cwd = cfg
+            .service
+            .cwd
+            .as_ref()
+            .context("managed service cwd is required")?;
+        let pid_file =
+            config::service_pid_path(&cfg).context("managed service pid_file is required")?;
+        let log_file =
+            config::service_log_path(&cfg).context("managed service log_file is required")?;
+        let state_entry = state.services.get(&cfg.id);
+        rows.push(ManagedRuntimeSpec {
+            schema: "bridgeboard.runtime-spec.v1".into(),
+            service_ref: PrepareOpenServiceRef {
+                id: cfg.id.clone(),
+                owner_host: cfg.owner_host.clone(),
+                source_machine: env.machine_id.clone(),
+                port: cfg.port,
+            },
+            source_config_path: entry.config_path.display().to_string(),
+            title: cfg.title.clone(),
+            local_machine_id: env.machine_id.clone(),
+            desired_state: desired_label(state_entry.and_then(|entry| entry.desired)),
+            runtime_status: process::managed_service_status(&cfg),
+            startup_policy: startup_policy_label(cfg.service.lifecycle.startup).into(),
+            restart_policy: restart_policy_label(cfg.service.lifecycle.restart).into(),
+            cwd: cwd.display().to_string(),
+            command: cfg.service.command.clone(),
+            pid_file: pid_file.display().to_string(),
+            log_file: log_file.display().to_string(),
+            health_url: cfg.service.health_url.clone(),
+            health_expect_body_contains: cfg.service.health_expect.body_contains.clone(),
+            startup_timeout_sec: cfg.service.startup_timeout_sec,
+            local_url: cfg.local_url.clone(),
+            open_url: open_url(&cfg),
+            network_url: cfg.network_url.clone(),
+            tunnel: ManagedRuntimeTunnelSpec {
+                modes: cfg
+                    .tunnel
+                    .modes
+                    .iter()
+                    .map(|mode| tunnel_mode_value(*mode).to_string())
+                    .collect(),
+                bind_host: cfg.tunnel.bind_host.clone(),
+            },
+        });
+    }
+    if id.is_some() && !matched_id {
+        bail!(
+            "service `{}` is not registered locally",
+            id.unwrap_or_default()
+        );
+    }
+    if id.is_some() && rows.is_empty() {
+        bail!(
+            "service `{}` is not a local managed service on `{}`",
+            id.unwrap_or_default(),
+            env.machine_id
+        );
+    }
+    rows.sort_by(|a, b| {
+        a.service_ref
+            .port
+            .cmp(&b.service_ref.port)
+            .then_with(|| a.service_ref.id.cmp(&b.service_ref.id))
+    });
+    Ok(rows)
 }
 
 pub(crate) fn port_rows_from_exports(
@@ -1164,6 +1275,13 @@ pub fn tunnel_modes_label(modes: &[TunnelMode]) -> String {
         .join(",")
 }
 
+fn tunnel_mode_value(mode: TunnelMode) -> &'static str {
+    match mode {
+        TunnelMode::LocalForward => "local_forward",
+        TunnelMode::ReverseForward => "reverse_forward",
+    }
+}
+
 fn tunnel_modes_label_for_peer(env: &BridgeEnv, is_peer: bool, modes: &[TunnelMode]) -> String {
     if is_peer && modes.is_empty() && env.app.defaults.assume_local_forward_for_peers {
         return "local(default)".into();
@@ -1568,6 +1686,27 @@ mod tests {
         }
     }
 
+    fn managed_test_config() -> BridgeConfig {
+        let mut cfg = external_test_config();
+        cfg.service.mode = ServiceMode::Managed;
+        cfg.service.lifecycle = LifecycleConfig {
+            startup: StartupPolicy::OnDemand,
+            restart: RestartPolicy::OnFailure,
+        };
+        cfg.service.cwd = Some("/tmp/bridgeboard-runtime-spec-test".into());
+        cfg.service.command = vec![
+            "python3".into(),
+            "-m".into(),
+            "http.server".into(),
+            "24991".into(),
+        ];
+        cfg.service.pid_file = Some(".bridgeboard/server.pid".into());
+        cfg.service.log_file = Some(".bridgeboard/server.log".into());
+        cfg.service.health_url = Some("http://127.0.0.1:24991/health".into());
+        cfg.tunnel.modes = vec![TunnelMode::LocalForward];
+        cfg
+    }
+
     fn env_with_service(cfg: &BridgeConfig) -> (TempDir, BridgeEnv) {
         let dir = tempfile::tempdir().unwrap();
         let config_file = dir.path().join("config.yaml");
@@ -1627,6 +1766,36 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "web-portal");
         assert_eq!(rows[0].runtime_status, "not-checked");
+    }
+
+    #[test]
+    fn managed_runtime_spec_exposes_launch_and_desired_state_without_yaml_parsing() {
+        let cfg = managed_test_config();
+        let (_dir, env) = env_with_service(&cfg);
+        let rows = managed_runtime_specs(&env, Some("web-portal")).unwrap();
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.schema, "bridgeboard.runtime-spec.v1");
+        assert_eq!(row.service_ref.id, "web-portal");
+        assert_eq!(row.desired_state, "-");
+        assert_eq!(
+            row.command,
+            vec![
+                "python3".to_string(),
+                "-m".to_string(),
+                "http.server".to_string(),
+                "24991".to_string()
+            ]
+        );
+        assert_eq!(row.cwd, "/tmp/bridgeboard-runtime-spec-test");
+        assert!(row.pid_file.ends_with(".bridgeboard/server.pid"));
+        assert!(row.log_file.ends_with(".bridgeboard/server.log"));
+        assert_eq!(
+            row.health_url.as_deref(),
+            Some("http://127.0.0.1:24991/health")
+        );
+        assert_eq!(row.tunnel.modes, vec!["local_forward".to_string()]);
     }
 
     #[test]

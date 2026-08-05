@@ -218,21 +218,24 @@ Validation:
 - `cargo test`
 - `cargo check --bins`
 
-## Current Stage 10 TethysUNE Open Contract
+## Current Stage 10 Bridgeboard App Migration Contract
 
 Goal: expose Bridgeboard as a side-effect-controlled service preparation layer
-for the TethysUNE shell. TethysUNE should be able to open local and peer web
-services inside an embedded workspace while Bridgeboard keeps ownership of
-service lifecycle, SSH local-forward setup, and legacy handoff records.
+for the TethysUNE Bridgeboard App. The app should be able to open local and
+peer web services inside an embedded workspace while Bridgeboard keeps
+ownership of service lifecycle, SSH local-forward setup, and legacy handoff
+records until migration acceptance.
 
 | Task | Status | Notes |
 | --- | --- | --- |
 | Add a JSON `prepare-open` CLI/core contract | Completed | Prepares on-demand services and peer tunnels without opening a browser. |
 | Add fast no-runtime service listing for app panels | Completed | `ports --json --peers --no-runtime` avoids Windows per-service PID probes. |
+| Add local managed runtime-spec interface | Completed | `runtime-spec --json` exposes launch spec and desired state without YAML parsing. |
 | Include owner/source config path in the result | Completed | Required for reversible Denia migration auditing. |
-| Document the Denia Score Annotator migration path | Completed | Preserves eva-02 handoff YAML and registry until validated. |
+| Document the Bridgeboard App migration inventory | Completed | Covers managed services, external handoffs, Cutex exclusions, state, and tunnels. |
 | Validate Linux and Windows CLI surfaces | Completed | Includes tethys Denia smoke and Windows target check. |
 | Deploy refreshed CLI to eva-02 for runtime validation | Completed | Replaced CLI after tests; preserved service YAML/state. |
+| Revert legacy Bridgeboard branding | Completed | Dashboard/Tauri/readme display names are Bridgeboard again. |
 
 Validation:
 

@@ -31,7 +31,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("build TethysUNE Tauri app");
+        .expect("build Bridgeboard Tauri app");
 
     app.run(|_app, event| {
         if let RunEvent::ExitRequested { code, api, .. } = event {
@@ -43,7 +43,7 @@ fn main() {
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open_i = MenuItem::with_id(app, "open", "Open TethysUNE", true, None::<&str>)?;
+    let open_i = MenuItem::with_id(app, "open", "Open Bridgeboard", true, None::<&str>)?;
     let browser_i = MenuItem::with_id(app, "browser", "Open Web Dashboard", true, None::<&str>)?;
     let ports_i = MenuItem::with_id(app, "ports", "Ports", true, None::<&str>)?;
     let doctor_i = MenuItem::with_id(app, "doctor", "Doctor", true, None::<&str>)?;
@@ -58,7 +58,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     let mut builder = TrayIconBuilder::new()
-        .tooltip("TethysUNE")
+        .tooltip("Bridgeboard")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -101,7 +101,7 @@ fn show_bridgeboard(app: &AppHandle) {
         return;
     };
     let _ = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-        .title("TethysUNE")
+        .title("Bridgeboard")
         .inner_size(1680.0, 980.0)
         .min_inner_size(1180.0, 680.0)
         .resizable(true)

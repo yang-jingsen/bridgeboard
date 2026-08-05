@@ -241,6 +241,8 @@ bridgeboard list
 bridgeboard list --peers
 bridgeboard status image-review-portal --peers
 bridgeboard ports --json --peers --no-runtime
+bridgeboard runtime-spec --json
+bridgeboard runtime-spec image-review-portal --json
 bridgeboard up image-review-portal
 bridgeboard up --peer gpu-box image-review-portal
 bridgeboard up --peer gpu-box --local-port 24660 image-review-portal
@@ -294,6 +296,13 @@ This returns the registered local and peer service rows without per-service
 Windows PID/health probes. Local rows use `runtime_status: "not-checked"` in
 this mode; call `status <id> --json` or `prepare-open` for a selected service
 when current runtime detail is needed.
+
+`runtime-spec --json` is the structured read-only interface for local managed
+services. It returns each service's `cwd`, argv `command`, resolved `pid_file`,
+resolved `log_file`, health expectation, desired state, runtime status, URLs,
+and tunnel policy without requiring a controller to parse `portal-bridge.yaml`.
+Use it when another runtime host needs to recreate Bridgeboard-managed process
+sessions during a supervised migration.
 
 The JSON result is shaped for a native Web tab/workspace:
 
@@ -359,7 +368,7 @@ bridgeboard-tray
 bridgeboard-tray.exe
 ```
 
-On the `tethysune/terminal-sessions` branch the user-facing desktop shell is named TethysUNE, while the CLI command and handoff protocol remain `bridgeboard` for compatibility. It owns the local dashboard server on `127.0.0.1:24000`, starts local `autostart` services, runs the lightweight supervisor loop, and opens a small native WebView control window instead of launching a browser or command console. The tray menu includes `Open TethysUNE`, `Open Web Dashboard`, `Ports`, `Doctor`, and `Quit`. Left-clicking the tray icon opens TethysUNE.
+The user-facing desktop shell is named Bridgeboard. It owns the local dashboard server on `127.0.0.1:24000`, starts local `autostart` services, runs the lightweight supervisor loop, and opens a small native WebView control window instead of launching a browser or command console. The tray menu includes `Open Bridgeboard`, `Open Web Dashboard`, `Ports`, `Doctor`, and `Quit`. Left-clicking the tray icon opens Bridgeboard.
 
 Build `bridgeboard-tray` from `apps/bridgeboard-tauri`; the root crate's
 `bridgeboard-win32-tray` binary is a legacy Windows fallback and intentionally
@@ -369,7 +378,7 @@ The in-window dashboard is the main UI. Its default `Apps` view is a launcher pa
 
 The `Devices` view is currently a read-only inventory derived from service rows. TODO: promote it into the place to manage local and peer display names, SSH aliases, dashboard endpoints, trust policy, and local-forward defaults.
 
-On the `tethysune/terminal-sessions` branch, the `Terminals` view is an embedded PTY control surface. It can start a local shell or launch a locally owned registered service whose config has `service.command` or `service.start_command`, then stream output, accept input, resize, and stop the session from the dashboard. The backend uses `portable-pty`, which maps to Unix PTY on Linux and ConPTY on Windows. Terminal API routes require the dashboard token and are disabled for non-loopback dashboard binds; remote peer terminals and full xterm.js/WebSocket TUI support are intentionally left for later hardening.
+The `Terminals` view is an embedded PTY control surface. It can start a local shell or launch a locally owned registered service whose config has `service.command` or `service.start_command`, then stream output, accept input, resize, and stop the session from the dashboard. The backend uses `portable-pty`, which maps to Unix PTY on Linux and ConPTY on Windows. Terminal API routes require the dashboard token and are disabled for non-loopback dashboard binds; remote peer terminals and full xterm.js/WebSocket TUI support are intentionally left for later hardening.
 
 Fallback tools remain available:
 

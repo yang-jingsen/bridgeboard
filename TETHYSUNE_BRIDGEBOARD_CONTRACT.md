@@ -1,8 +1,69 @@
-# TethysUNE Bridgeboard Contract
+# TethysUNE Bridgeboard App Migration Contract
 
-This note is the Bridgeboard-side integration contract for TethysUNE. It is
-deliberately reversible: TethysUNE should consume Bridgeboard service records
-and prepared URLs, not move or rewrite legacy handoff data during validation.
+This is the Bridgeboard-side contract for migrating Bridgeboard-managed service
+control into the current TethysUNE Bridgeboard App/runtime boundary.
+
+Scope correction:
+
+- Migrate services currently managed or recorded by Bridgeboard through its
+  registry, state, lifecycle, and tunnel model.
+- Do not preserve standalone `bridgeboard serve`, `bridgeboard-tray`, or their
+  autostart/systemd products as long-term runtime products after the migration
+  is accepted.
+- Do not stop live services during inventory or contract migration.
+- Do not migrate Cutex-owned services. `cutex-agent-bus` and
+  `cutex-management-api` are explicitly excluded; `cutex-desktop-notify` should
+  also remain outside this migration unless the owner says otherwise.
+- Revert legacy Bridgeboard project branding back to `Bridgeboard`. Current
+  TethysUNE stays separate and may host a Bridgeboard App/plugin.
+
+## Runtime Boundary
+
+Bridgeboard remains the source of truth for service metadata until TethysUNE has
+accepted the migrated runtime:
+
+- registry entries and config paths
+- service lifecycle policy
+- fixed owner ports
+- local/reverse tunnel metadata
+- desired running state
+- health/status snapshots
+- safe start/stop/restart semantics
+
+TethysUNE should consume Bridgeboard through structured commands first. It
+should not parse or mutate YAML/state files directly except for audited backup
+or future one-time import tooling.
+
+## Fast List Path
+
+Use this for the TethysUNE Bridgeboard App service grid:
+
+```bash
+bridgeboard ports --json --peers --no-runtime
+```
+
+`--no-runtime` is the intended app-panel list path. It avoids Windows
+per-service PID/health probes and keeps discovery inside the UI timeout. Local
+rows whose runtime was skipped report:
+
+```json
+"runtime_status": "not-checked"
+```
+
+Use targeted calls after the user selects a service:
+
+```bash
+bridgeboard status <id> --json --peers
+bridgeboard runtime-spec <id> --json
+bridgeboard prepare-open --id <id> --owner-host <owner> --source-machine <source> --local-port <local-port> --target internal
+```
+
+Observed eva-02 latency after the no-runtime CLI update:
+
+- `ports --json --no-runtime`: about 0.03s
+- `ports --json --peers --no-runtime`: about 4.75s
+- Plain `ports --json`: observed about 33s on eva-02 and is not the UI list
+  SLA path.
 
 ## Open Preparation
 
@@ -21,9 +82,6 @@ bridgeboard prepare-open \
 The command starts an `on_demand` service when Bridgeboard owns the lifecycle,
 starts or reuses an SSH `local_forward` for peer services, and prints JSON. It
 does not call `webbrowser::open`.
-
-Use `--target external` only when a shell wants Bridgeboard preparation but
-will still open the returned URL outside the embedded workspace.
 
 Important result fields:
 
@@ -49,7 +107,7 @@ Important result fields:
   "direct_open": true,
   "local_port": 24321,
   "network_url": null,
-  "actions": ["local tunnel 24321 -> eva-02:24321 pid 2193991"],
+  "actions": ["local tunnel 24321 -> eva-02:24321 pid 3751054"],
   "warnings": []
 }
 ```
@@ -57,7 +115,132 @@ Important result fields:
 `source_config_path` is the owner/source Bridgeboard YAML path. TethysUNE may
 display it or log it for audit, but it should not mutate that file directly.
 
-## Denia Migration
+## Action Mapping
+
+Row identity must be preserved for every action:
+
+- `id`
+- `owner_host`
+- `source_machine`
+- `port`
+- `local_port` when present
+
+List:
+
+```bash
+bridgeboard ports --json --peers --no-runtime
+```
+
+Open embedded:
+
+```bash
+bridgeboard prepare-open --id <id> --owner-host <owner> --source-machine <source> --local-port <local-port> --target internal
+```
+
+Local managed launch-spec and desired-state:
+
+```bash
+bridgeboard runtime-spec --json
+bridgeboard runtime-spec <id> --json
+```
+
+This is the stable structured interface for a TethysUNE Runtime Host cutover.
+It returns only services where the current machine is the owner and
+`service_mode` is `managed`. It includes `schema:
+bridgeboard.runtime-spec.v1`, row identity, source config path, desired state,
+current managed runtime status, `cwd`, argv `command`, resolved `pid_file`,
+resolved `log_file`, health expectation, startup timeout, URLs, and tunnel
+policy. TethysUNE should use this instead of parsing `portal-bridge.yaml`.
+
+Local owner lifecycle:
+
+```bash
+bridgeboard up <id>
+bridgeboard stop <id>
+bridgeboard restart <id>
+```
+
+Peer/local-forward lifecycle:
+
+```bash
+bridgeboard up --peer <source-machine> --local-port <local-port> <id>
+```
+
+Remote owner lifecycle currently exists in Bridgeboard core/dashboard target
+actions. CLI `remote-up`, `remote-down`, and `remote-restart` are id-only
+compatibility wrappers, so TethysUNE should avoid them for duplicate ids unless
+a row-scoped CLI is added.
+
+External/manual records may be opened and tunneled, but lifecycle actions are
+safe only when the record has explicit `start_command`, `stop_command`,
+`restart_command`, or `task_name` metadata. Otherwise TethysUNE should withhold
+Start/Stop/Restart or label them as owner/manual.
+
+## Inventory
+
+Snapshot source:
+
+```bash
+bridgeboard registry export --json --no-runtime
+bridgeboard runtime-spec --json
+ssh eva-02 'bridgeboard.exe registry export --json --no-runtime'
+bridgeboard ports --json --peers --no-runtime
+```
+
+### Managed Lifecycle Services
+
+These have `service_mode: managed` and should be migrated with lifecycle,
+desired state, pid/state metadata, logs, and tunnel rules.
+
+| id | owner/source | port | lifecycle | tunnel | config |
+| --- | --- | ---: | --- | --- | --- |
+| `ifm-rescue-portal` | `tethys` | 24021 | `on_demand/on_failure`, desired `running` | `local_forward` | `/home/senxiu/Projects/IFM/portal-bridge.yaml` |
+| `scpolya-ui` | `tethys` | 24120 | `on_demand/on_failure`, desired `running` | reserved/local owner | `/home/senxiu/Projects/sc-polya-v2/portal-bridge.yaml` |
+| `aria-console` | `tethys` | 24210 | `on_demand/on_failure`, desired `running` | reserved/local owner | `/home/senxiu/Projects/aria-console/portal-bridge.yaml` |
+| `eva02-experiment-console` | `eva-02` | 24301 | `on_demand/on_failure`, desired `running` | `local_forward, reverse_forward` | `E:\Projects (Aemeath)\eva-02-image-service\portal-bridge.yaml` |
+| `eva02-image2-results` | `eva-02` | 24308 | `on_demand/on_failure`, desired `running` | `local_forward, reverse_forward` | `E:\Projects (Aemeath)\eva-02-image-service\portal-bridge-image2-results.yaml` |
+
+For tethys direct cutover, the immediate `runtime-spec --json` services are:
+
+- `ifm-rescue-portal`
+- `scpolya-ui`
+- `aria-console`
+
+The owner reported these are currently children of legacy `bridgeboard-tray`.
+Do not stop them until the TethysUNE controller is ready to create replacement
+Runtime Host sessions.
+
+### Bridgeboard Handoff Records
+
+These are `service_mode: external` registry records. Migrate their visibility,
+fixed port, owner/source identity, URLs, tunnel behavior, pid metadata, and
+safe lifecycle metadata when present.
+
+| id | owner/source | port | lifecycle metadata | config |
+| --- | --- | ---: | --- | --- |
+| `heltia-web` | `eva-02` | 24085 | manual record, no tunnel in YAML but local default may apply | `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\heltia-web.yaml` |
+| `aemeath-hexmap-editor` | `eva-02` | 24201 | scheduled task `Bridgeboard-aemeath-hexmap-editor` | `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\aemeath-hexmap-editor.yaml` |
+| `wuthering-waves-bill` | `eva-02` | 24202 | scheduled task `Bridgeboard-wuthering-waves-bill` | `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\wuthering-waves-bill.yaml` |
+| `menghualu-remastered-portal` | `eva-02` | 24231 | manual external record | `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\menghualu-remastered-portal.yaml` |
+| `tokyo-dreams-portal` | `eva-02` | 24232 | manual external record | `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\tokyo-dreams-portal.yaml` |
+| `daniya-voice-audition` | `eva-02` | 24233 | manual external record | `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\daniya-voice-audition.yaml` |
+| `kks-voice-audition` | `eva-02` | 24234 | scheduled task `Bridgeboard-kks-voice-audition` | `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\kks-voice-audition.yaml` |
+| `denia-score-annotator` | `eva-02` | 24321 | manual external record, no start config | `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\denia-score-annotator.yaml` |
+
+### Excluded Cutex-Owned Records
+
+Do not migrate these into the Bridgeboard App service lifecycle unless the owner
+explicitly changes scope:
+
+- `cutex-agent-bus` on `tethys` and `eva-02`
+- `cutex-management-api` on `tethys` and `eva-02`
+- `cutex-desktop-notify` on `tethys`, treated as Cutex-owned by name and
+  purpose
+
+State-only entries not present in registry, such as eva-02 `goods-portal`, are
+not migration sources unless re-registered.
+
+## Denia Today
 
 Current real service:
 
@@ -68,36 +251,15 @@ Current real service:
 - owner URL: `http://127.0.0.1:24321/`
 - owner config: `C:\Users\senxiu\AppData\Roaming\bridgeboard\handoffs\denia-score-annotator.yaml`
 - owner registry: `C:\Users\senxiu\AppData\Roaming\bridgeboard\registry.json`
+- service mode: `external`
+- startup/restart: `manual/never`
+- pid source: `port:24321`
+- local tunnel from tethys: `denia-score-annotator:local:eva-02`, local port
+  `24321`
 
-Fast app-panel listing:
-
-```bash
-bridgeboard ports --json --peers --no-runtime
-```
-
-Use `--no-runtime` for TethysUNE's normal service grid, especially on Windows
-owners. It avoids per-service PID/health probes and keeps the provider under a
-short UI timeout. A local row whose runtime was intentionally skipped reports
-`runtime_status: "not-checked"`. Use `prepare-open` or `status <id> --json` for
-the selected service when exact runtime detail is required.
-
-Latency/SLA guidance:
-
-- `ports --json --peers --no-runtime` is the intended app-panel list path and
-  should stay under the TethysUNE provider timeout; on eva-02 it measured
-  about 4.75s with peer lookup and 0.03s without peer lookup.
-- Plain `ports --json` is an operator/status path. On Windows owners with many
-  services it may perform slow per-service PID checks and is not the UI list
-  SLA path.
-- For Denia today, list with `--no-runtime`, then call `prepare-open` for the
-  selected row. `prepare-open` returns live owner runtime when called on eva-02
-  and a prepared local tunnel URL when called from tethys.
-
-How to identify it from tethys:
+Open from tethys:
 
 ```bash
-bridgeboard ports --json --peers
-bridgeboard status denia-score-annotator --json --peers
 bridgeboard prepare-open \
   --id denia-score-annotator \
   --owner-host eva-02 \
@@ -106,59 +268,40 @@ bridgeboard prepare-open \
   --target internal
 ```
 
-How to identify it on eva-02:
+Open on eva-02:
 
 ```powershell
-bridgeboard status denia-score-annotator --json
-Get-Content "$env:APPDATA\bridgeboard\handoffs\denia-score-annotator.yaml"
+bridgeboard.exe prepare-open --id denia-score-annotator --owner-host eva-02 --source-machine eva-02 --local-port 24321 --target internal
 ```
 
-Expected owner-side handoff shape:
+Denia has no `start_command`, `stop_command`, `restart_command`, or
+`task_name` today. TethysUNE can migrate its registry visibility, tunnel/open
+behavior, and status reads now, but should not claim it can start the owner
+process after reboot until a later handoff update adds explicit start metadata.
 
-```yaml
-schema: portal-bridge.v1
-id: denia-score-annotator
-title: Denia Score Annotator
-owner_host: eva-02
-port: 24321
-service:
-  mode: external
-  lifecycle:
-    startup: manual
-    restart: never
-  pid_source: port:24321
-  pid_port: 24321
-  health_url: http://127.0.0.1:24321/
-tunnel:
-  modes: [local_forward]
-  bind_host: 127.0.0.1
-local_url: http://127.0.0.1:24321/
-open_url: http://127.0.0.1:24321/
-```
+## Forward Migration
 
-Migration path:
+1. Keep all Bridgeboard registry/config/state files unchanged while validating.
+2. Import/list through `ports --json --peers --no-runtime`.
+3. For each row, preserve `id + owner_host + source_machine + port + local_port`.
+4. Route opens through `prepare-open`.
+5. Route lifecycle through Bridgeboard semantics only when the row mode and
+   metadata prove it is safe.
+6. Persist TethysUNE UI state separately from Bridgeboard registry/state.
+7. After managed-service migration is accepted, retire standalone
+   `bridgeboard serve`, `bridgeboard-tray`, their autostart entries, and
+   user-systemd units in a separate stop-and-remove stage.
 
-1. Keep the eva-02 handoff YAML and registry entry unchanged.
-2. In TethysUNE, list services from `bridgeboard ports --json --peers`.
-3. When the Denia tile is opened, call `prepare-open` with the exact row
-   identity: id, owner_host, source_machine, and local_port when present.
-4. Load the returned `url` inside the embedded web workspace.
-5. Store only TethysUNE UI state separately, such as tabs, pins, recent opens,
-   and display grouping.
-6. Validate Denia opens from tethys and from eva-02 before removing any legacy
-   UI shortcut.
+## Rollback
 
-Rollback path:
+Before standalone runtime retirement, rollback is simple:
 
-1. Stop using the TethysUNE embedded opener for the service.
-2. Continue using `bridgeboard open denia-score-annotator` or the legacy
-   Bridgeboard dashboard/tray entry.
-3. Leave `denia-score-annotator.yaml` and the registry entry in place; no data
-   migration is required to roll back.
+1. Stop using the TethysUNE Bridgeboard App runtime.
+2. Continue using legacy `bridgeboard open`, `bridgeboard serve`, dashboard, or
+   tray.
+3. Leave registry/config/state files in place.
+4. Restore CLI backups only if a binary regression is found.
 
-Out of scope for this migration:
-
-- Moving Denia files into TethysUNE.
-- Rewriting the Denia handoff YAML.
-- Integrating cutex-manager or Waveline runtime controls.
-- Changing the legacy Bridgeboard dashboard UI.
+Do not delete registry entries, handoff YAML, state files, autostart entries, or
+systemd units until the owner accepts the migration and explicitly approves the
+retirement stage.

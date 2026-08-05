@@ -1,5 +1,14 @@
 # Bridgeboard Changelog
 
+- 2026-08-05: Reverted legacy Bridgeboard project branding from TethysUNE back
+  to Bridgeboard in the dashboard HTML, Tauri shell metadata/menu/window title,
+  CLI serve output, and README. Expanded the TethysUNE Bridgeboard App contract
+  from Denia-only opening into a migration boundary for Bridgeboard-managed
+  registry/state/lifecycle/tunnel records, with Cutex-owned services excluded
+  and standalone `bridgeboard serve`/tray retirement deferred until migration
+  acceptance. Added `bridgeboard runtime-spec --json` as a read-only structured
+  launch-spec/desired-state interface for local managed services so a migration
+  controller does not need to parse `portal-bridge.yaml`.
 - 2026-07-30: Added `bridgeboard ports --no-runtime` for fast app-panel
   listing on Windows owners. The default `ports` behavior still performs local
   runtime/PID checks, while `--no-runtime` exports local rows without
