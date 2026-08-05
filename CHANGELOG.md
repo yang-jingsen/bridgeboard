@@ -1,5 +1,11 @@
 # Bridgeboard Changelog
 
+- 2026-08-05: Clarified BB-1 semantics before live rollout. Remote service
+  identity is `id + owner_host + source_machine + owner port`; `local_port` is
+  a caller-local forwarding/open parameter echoed for correlation, not backend
+  service identity. Documented that `remote-down` stops all local Bridgeboard
+  tunnels recorded for the service id and owner after stopping the owner
+  service. Validation: docs-only `git diff --check`.
 - 2026-08-05: Added BB-1 Bridgeboard App contracts. `observe --json` returns
   `bridgeboard.observe.v1` as a bounded, side-effect-free live observation
   envelope with exact row identity, healthy/unhealthy/unreachable/unknown

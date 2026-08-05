@@ -147,11 +147,13 @@ bridgeboard observe --json --peers --timeout-sec <seconds>
 
 This returns `schema: bridgeboard.observe.v1`. The command is side-effect free:
 it does not start services, create tunnels, or write state. Peer observation is
-batched per source/owner machine and bounded by the explicit timeout. Each row
-echoes exact identity as `service_ref.id`, `owner_host`, `source_machine`,
-`port`, plus nullable `local_port` beside the service ref. App validators
-should treat missing and null `local_port` as equivalent, and should reject a
-numeric mismatch.
+batched per source/owner machine and bounded by the explicit timeout. Remote
+service identity is `service_ref.id`, `owner_host`, `source_machine`, and owner
+`port`. Nullable `local_port` sits beside the service ref because it is a
+caller-local endpoint/forwarding parameter for opening or tunnel correlation,
+not part of the remote service identity. App validators should treat missing
+and null `local_port` as equivalent for row correlation, and should reject a
+numeric mismatch against the App's current row.
 
 Status values:
 
@@ -228,9 +230,13 @@ bridgeboard remote-restart <id> --owner-host <owner> --source-machine <source> -
 
 JSON lifecycle output uses `schema: bridgeboard.lifecycle-action.v1`, echoes the
 verified `service_ref`, echoes nullable `local_port`, and returns `messages`
-and `warnings` arrays. JSON lifecycle requires `id + owner_host +
-source_machine + port`; id-only remote lifecycle remains a human compatibility
-path and should not be used by strict app integrations.
+and `warnings` arrays. JSON lifecycle verifies remote service identity as
+`id + owner_host + source_machine + port`. Echoed `local_port` is a local
+forwarding/open parameter for caller correlation, not backend service identity;
+id-only remote lifecycle remains a human compatibility path and should not be
+used by strict app integrations. `remote-down` stops the owner service and then
+stops all local Bridgeboard tunnels recorded for that service id and owner, not
+only one local port.
 
 External/manual records may be opened and tunneled, but lifecycle actions are
 safe only when the record has explicit `start_command`, `stop_command`,

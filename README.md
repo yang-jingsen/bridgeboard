@@ -296,12 +296,13 @@ bridgeboard observe --json --peers --timeout-sec 2
 ```
 
 The command is read-only: it does not start services, create SSH forwards, or
-write state. The JSON schema is `bridgeboard.observe.v1`; rows preserve
-`service_ref.id`, `owner_host`, `source_machine`, `port`, and nullable
-`local_port`. Status is one of `healthy`, `unhealthy`, `unreachable`, or
-`unknown`. A reachable host with a stopped service is represented as
-`unreachable`, usually with reason `connection-refused` or `timeout`, not as
-`unknown`.
+write state. The JSON schema is `bridgeboard.observe.v1`. Remote service
+identity is `service_ref.id`, `owner_host`, `source_machine`, and owner
+`port`; nullable `local_port` is the caller-local endpoint/forwarding parameter
+for opening or tunnel correlation, not part of the remote service identity.
+Status is one of `healthy`, `unhealthy`, `unreachable`, or `unknown`. A
+reachable host with a stopped service is represented as `unreachable`, usually
+with reason `connection-refused` or `timeout`, not as `unknown`.
 
 ```json
 {
@@ -340,7 +341,11 @@ bridgeboard remote-up image-review-portal \
 
 The lifecycle JSON schema is `bridgeboard.lifecycle-action.v1`. JSON lifecycle
 requires `--owner-host`, `--source-machine`, and `--port`; `--local-port`
-remains optional and is echoed when present.
+remains optional and is echoed when present. Bridgeboard verifies the remote
+service identity as `id + owner_host + source_machine + port`; echoed
+`local_port` is a local forwarding/open parameter for caller correlation.
+`remote-down` stops the owner service and then stops all local Bridgeboard
+tunnels recorded for that service id and owner, not only one local port.
 
 For app-panel listing on Windows owners, prefer:
 
