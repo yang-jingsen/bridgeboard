@@ -1,5 +1,11 @@
 # Bridgeboard Changelog
 
+- 2026-08-05: Fixed BB-1 peer observe rollout timing. Local observe health
+  probes now run with a fixed cap of 16 concurrent workers, so batch duration
+  no longer scales as row count times per-probe timeout. Peer observe SSH
+  process timeout now uses the per-probe timeout plus a 6 second startup
+  margin, capped at 18 seconds. Validation: `cargo fmt --check`, `cargo test`
+  passed with 27 lib tests and 2 main tests, and `cargo check --bins` passed.
 - 2026-08-05: Clarified BB-1 semantics before live rollout. Remote service
   identity is `id + owner_host + source_machine + owner port`; `local_port` is
   a caller-local forwarding/open parameter echoed for correlation, not backend

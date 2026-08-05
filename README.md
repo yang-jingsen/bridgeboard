@@ -300,6 +300,9 @@ write state. The JSON schema is `bridgeboard.observe.v1`. Remote service
 identity is `service_ref.id`, `owner_host`, `source_machine`, and owner
 `port`; nullable `local_port` is the caller-local endpoint/forwarding parameter
 for opening or tunnel correlation, not part of the remote service identity.
+Local health probes run with a fixed cap of 16 concurrent workers. Peer observe
+uses one batch command per peer with a process timeout of the per-probe timeout
+plus 6 seconds, capped at 18 seconds.
 Status is one of `healthy`, `unhealthy`, `unreachable`, or `unknown`. A
 reachable host with a stopped service is represented as `unreachable`, usually
 with reason `connection-refused` or `timeout`, not as `unknown`.

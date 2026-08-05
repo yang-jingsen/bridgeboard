@@ -18,6 +18,10 @@ use std::thread;
 use std::time::Duration;
 use url::Url;
 
+const OBSERVE_LOCAL_WORKER_LIMIT: usize = 16;
+const PEER_OBSERVE_PROCESS_MARGIN_SECS: u64 = 6;
+const PEER_OBSERVE_PROCESS_TIMEOUT_CAP_SECS: u64 = 18;
+
 #[derive(Clone)]
 pub struct BridgeEnv {
     pub paths: AppPaths,
@@ -241,13 +245,27 @@ pub fn observe_services(
         .filter(|row| id.map(|wanted| wanted == row.id).unwrap_or(true))
         .collect();
     let local_configs = local_config_map(env)?;
+    let local_observations =
+        observe_local_observation_map(env, &rows, include_peers, &local_configs, timeout);
     let peer_observations = fetch_peer_observation_map(env, &rows, include_peers, timeout);
     let mut warnings = Vec::new();
     let mut out_rows = Vec::new();
     for row in rows {
         let observed_from = observation_host(env, &row, include_peers);
         let observation = if observed_from == env.machine_id {
-            observe_local_port_row(&row, local_configs.get(&row.id), timeout)
+            local_observations
+                .get(&observe_lookup_key(&row))
+                .cloned()
+                .unwrap_or_else(|| {
+                    ObservationResult::unknown(
+                        "not-observed",
+                        Some(format!(
+                            "no local observation was recorded for `{}`",
+                            row.id
+                        )),
+                        None,
+                    )
+                })
         } else {
             match peer_observations.get(&observed_from) {
                 Some(Ok(peer_rows)) => peer_rows
@@ -596,6 +614,42 @@ fn observation_host(env: &BridgeEnv, row: &PortRow, include_peers: bool) -> Stri
     env.machine_id.clone()
 }
 
+fn observe_local_observation_map(
+    env: &BridgeEnv,
+    rows: &[PortRow],
+    include_peers: bool,
+    local_configs: &BTreeMap<String, BridgeConfig>,
+    timeout: Duration,
+) -> BTreeMap<ObservationLookupKey, ObservationResult> {
+    let mut tasks = Vec::new();
+    for row in rows {
+        if observation_host(env, row, include_peers) != env.machine_id {
+            continue;
+        }
+        tasks.push((
+            observe_lookup_key(row),
+            row.clone(),
+            local_configs.get(&row.id).cloned(),
+        ));
+    }
+    let mut observations = BTreeMap::new();
+    for chunk in tasks.chunks(OBSERVE_LOCAL_WORKER_LIMIT) {
+        let mut handles = Vec::new();
+        for (key, row, cfg) in chunk.iter().cloned() {
+            handles.push(thread::spawn(move || {
+                let observation = observe_local_port_row(&row, cfg.as_ref(), timeout);
+                (key, observation)
+            }));
+        }
+        for handle in handles {
+            if let Ok((key, observation)) = handle.join() {
+                observations.insert(key, observation);
+            }
+        }
+    }
+    observations
+}
+
 fn fetch_peer_observation_map(
     env: &BridgeEnv,
     rows: &[PortRow],
@@ -647,7 +701,12 @@ fn fetch_peer_observations(
 ) -> Result<ObserveEnvelope, String> {
     let timeout_arg = timeout.as_secs().max(1).to_string();
     let args = ["observe", "--json", "--timeout-sec", timeout_arg.as_str()];
-    let output = peer::run_bridgeboard_command(&env.app, peer_name, &args, timeout)?;
+    let output = peer::run_bridgeboard_command(
+        &env.app,
+        peer_name,
+        &args,
+        peer_observe_process_timeout(timeout),
+    )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -664,6 +723,15 @@ fn fetch_peer_observations(
         return Err(format!("unsupported observe schema `{}`", envelope.schema));
     }
     Ok(envelope)
+}
+
+fn peer_observe_process_timeout(per_probe_timeout: Duration) -> Duration {
+    let seconds = per_probe_timeout
+        .as_secs()
+        .max(1)
+        .saturating_add(PEER_OBSERVE_PROCESS_MARGIN_SECS)
+        .min(PEER_OBSERVE_PROCESS_TIMEOUT_CAP_SECS);
+    Duration::from_secs(seconds)
 }
 
 fn observe_local_port_row(
@@ -2109,6 +2177,7 @@ mod tests {
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::{Arc, Barrier};
     use std::thread;
     use tempfile::TempDir;
 
@@ -2168,15 +2237,21 @@ mod tests {
     }
 
     fn env_with_service(cfg: &BridgeConfig) -> (TempDir, BridgeEnv) {
+        env_with_services(&[cfg.clone()])
+    }
+
+    fn env_with_services(configs: &[BridgeConfig]) -> (TempDir, BridgeEnv) {
         let dir = tempfile::tempdir().unwrap();
         let config_file = dir.path().join("config.yaml");
         let registry_file = dir.path().join("registry.json");
         let state_file = dir.path().join("state.json");
-        let service_file = dir.path().join("portal-bridge.yaml");
         fs::write(&config_file, "machine_id: workstation\n").unwrap();
-        fs::write(&service_file, serde_yaml::to_string(cfg).unwrap()).unwrap();
         let mut registry = Registry::default();
-        registry.register(service_file).unwrap();
+        for cfg in configs {
+            let service_file = dir.path().join(format!("{}.yaml", cfg.id));
+            fs::write(&service_file, serde_yaml::to_string(cfg).unwrap()).unwrap();
+            registry.register(service_file).unwrap();
+        }
         registry.save(&registry_file).unwrap();
         let env = BridgeEnv::from_paths(AppPaths {
             config_file,
@@ -2209,6 +2284,24 @@ mod tests {
                 body
             );
             stream.write_all(response.as_bytes()).unwrap();
+        });
+        port
+    }
+
+    fn serve_once_after_barrier(listener: TcpListener, barrier: Arc<Barrier>) -> u16 {
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 512];
+            let _ = stream.read(&mut request);
+            barrier.wait();
+            let body = "ok";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
         });
         port
     }
@@ -2297,6 +2390,48 @@ mod tests {
     }
 
     #[test]
+    fn observe_local_health_checks_overlap_with_fixed_worker_limit() {
+        let barrier = Arc::new(Barrier::new(2));
+        let first_port =
+            serve_once_after_barrier(bind_reserved_listener(24970), Arc::clone(&barrier));
+        let second_port = serve_once_after_barrier(bind_reserved_listener(first_port + 1), barrier);
+        let mut first = external_test_config();
+        first.id = "first-slow".into();
+        first.port = first_port;
+        first.service.health_url = Some(format!("http://127.0.0.1:{first_port}/health"));
+        first.local_url = Some(format!("http://127.0.0.1:{first_port}/"));
+        first.open_url = None;
+        let mut second = external_test_config();
+        second.id = "second-slow".into();
+        second.port = second_port;
+        second.service.health_url = Some(format!("http://127.0.0.1:{second_port}/health"));
+        second.local_url = Some(format!("http://127.0.0.1:{second_port}/"));
+        second.open_url = None;
+        let (_dir, env) = env_with_services(&[first, second]);
+        let envelope = observe_services(&env, None, false, Duration::from_secs(1)).unwrap();
+
+        assert_eq!(OBSERVE_LOCAL_WORKER_LIMIT, 16);
+        assert_eq!(envelope.rows.len(), 2);
+        assert!(envelope
+            .rows
+            .iter()
+            .all(|row| row.observation.status == "healthy"));
+    }
+
+    #[test]
+    fn peer_observe_process_timeout_adds_margin_and_stays_below_app_ceiling() {
+        assert_eq!(
+            peer_observe_process_timeout(Duration::from_secs(2)),
+            Duration::from_secs(8)
+        );
+        assert!(peer_observe_process_timeout(Duration::from_secs(2)) < Duration::from_secs(20));
+        assert_eq!(
+            peer_observe_process_timeout(Duration::from_secs(60)),
+            Duration::from_secs(18)
+        );
+    }
+
+    #[test]
     fn managed_runtime_spec_exposes_launch_and_desired_state_without_yaml_parsing() {
         let cfg = managed_test_config();
         let (_dir, env) = env_with_service(&cfg);
@@ -2346,7 +2481,7 @@ mod tests {
         assert_eq!(result.service_ref.owner_host, "workstation");
         assert_eq!(result.service_ref.source_machine, "workstation");
         assert_eq!(result.service_ref.port, 24991);
-        assert!(result.source_config_path.ends_with("portal-bridge.yaml"));
+        assert!(result.source_config_path.ends_with("web-portal.yaml"));
         assert_eq!(result.url, "http://127.0.0.1:24991/custom");
         assert_eq!(result.origin.as_deref(), Some("http://127.0.0.1:24991"));
         assert_eq!(result.actions, Vec::<String>::new());

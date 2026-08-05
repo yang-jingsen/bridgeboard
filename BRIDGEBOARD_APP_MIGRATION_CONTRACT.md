@@ -155,6 +155,12 @@ not part of the remote service identity. App validators should treat missing
 and null `local_port` as equivalent for row correlation, and should reject a
 numeric mismatch against the App's current row.
 
+Observation timing is bounded and deterministic. Local health probes run with a
+fixed cap of 16 concurrent workers. Peer observation uses one batch command per
+peer with an outer process timeout of `timeout_sec + 6s`, capped at 18 seconds,
+so the App's current `--timeout-sec 2` path remains below a 20 second runner
+ceiling while allowing SSH/process startup margin.
+
 Status values:
 
 - `healthy`: reachable HTTP 2xx/3xx and body expectations passed.
